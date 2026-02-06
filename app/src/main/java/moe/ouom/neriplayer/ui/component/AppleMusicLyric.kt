@@ -648,22 +648,6 @@ fun AppleMusicActiveLine(
     }
     val revealOffsetChars = revealOffsetCharsAnimatable.value
 
-    val mergedWords = remember(line.words) { mergeWordTimings(line.words) }
-    val isWordCurrentlyActive = remember(mergedWords, currentTimeMs) {
-        findActiveWord(mergedWords, currentTimeMs) != null
-    }
-    val headGlowRadius by animateDpAsState(
-        targetValue = if (isWordCurrentlyActive) spec.glowRadiusExpanded else 0.dp,
-        animationSpec = spring(spec.glowPulseStiffness, spec.glowPulseDamping),
-        label = "head_glow_radius"
-    )
-    val headGlowAlpha by animateFloatAsState(
-        targetValue = if (isWordCurrentlyActive) spec.glowAlpha else 0f,
-        animationSpec = tween(spec.glowMoveSmoothingMs),
-        label = "head_glow_alpha"
-    )
-    val headGlowRadiusPx = with(LocalDensity.current) { headGlowRadius.toPx() }
-
     val textStyle = TextStyle(
         fontSize = fontSize,
         fontWeight = FontWeight.Medium,
@@ -673,19 +657,7 @@ fun AppleMusicActiveLine(
 
     val effectiveFadeWidth = if (line.words.isNullOrEmpty()) fadeWidth else 0.dp
 
-    Box(
-        modifier = Modifier.drawBehind {
-            if (layout != null && headGlowRadiusPx > 0f) {
-                drawRadialHeadGlow(
-                    layout = layout!!,
-                    charOffset = revealOffsetChars,
-                    radiusPx = headGlowRadiusPx,
-                    color = spec.glowColor,
-                    alpha = headGlowAlpha
-                )
-            }
-        }
-    ) {
+    Box {
         // 底版文本
         Text(
             text = line.text,
