@@ -198,6 +198,7 @@ fun HyperBackground(
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            v.setRenderEffect(painter.renderEffect)
             var startNs = 0L
             var beatEnv = 0f
             while (isActive) {
@@ -212,7 +213,7 @@ fun HyperBackground(
                     val w = v.width; val h = v.height
                     if (w > 0 && h > 0) painter.setResolution(floatArrayOf(w.toFloat(), h.toFloat()))
                     painter.updateMaterials()
-                    v.setRenderEffect(painter.renderEffect)
+                    v.invalidate()
                 }
             }
         }

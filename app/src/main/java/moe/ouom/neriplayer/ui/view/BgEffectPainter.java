@@ -50,6 +50,7 @@ import moe.ouom.neriplayer.util.NPLogger;
 public class BgEffectPainter {
     private float[] bound;
     RuntimeShader mBgRuntimeShader;
+    private final RenderEffect renderEffect;
     Context mContext;
     Resources mResources;
     private float[] uResolution;
@@ -82,6 +83,7 @@ public class BgEffectPainter {
         mResources = context.getResources();
         String loadShader = loadShader();
         mBgRuntimeShader = new RuntimeShader(loadShader);
+        renderEffect = RenderEffect.createRuntimeShaderEffect(mBgRuntimeShader, "uTex");
         mBgRuntimeShader.setFloatUniform("uTranslateY", uTranslateY);
         mBgRuntimeShader.setFloatUniform("uPoints", uPoints);
         mBgRuntimeShader.setFloatUniform("uColors", uColors);
@@ -109,7 +111,7 @@ public class BgEffectPainter {
     }
 
     public RenderEffect getRenderEffect() {
-        return RenderEffect.createRuntimeShaderEffect(mBgRuntimeShader, "uTex");
+        return renderEffect;
     }
 
     public void updateMaterials() {

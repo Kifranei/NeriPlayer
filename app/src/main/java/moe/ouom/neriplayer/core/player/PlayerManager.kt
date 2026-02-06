@@ -1048,9 +1048,16 @@ object PlayerManager {
                 _playbackPositionMs.value = pos
 
                 val now = SystemClock.uptimeMillis()
-                if (now - lastLyriconPositionUpdateMs >= 120L) {
+                if (now - lastLyriconPositionUpdateMs >= 60L) {
                     lastLyriconPositionUpdateMs = now
-                    LyriconManager.setPosition(pos)
+                    val leadMs = 80L
+                    val duration = player.duration
+                    val lyriconPos = if (duration > 0) {
+                        (pos + leadMs).coerceAtMost(duration)
+                    } else {
+                        pos + leadMs
+                    }
+                    LyriconManager.setPosition(lyriconPos)
                 }
                 delay(40)
             }
