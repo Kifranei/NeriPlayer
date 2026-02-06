@@ -384,6 +384,28 @@ object AudioDownloadManager {
         return if (lyricFile.exists()) lyricFile.absolutePath else null
     }
 
+    fun writeLyricsCacheIfAbsent(context: Context, song: SongItem, lyric: String?, translatedLyric: String?) {
+        val baseDir = context.getExternalFilesDir(Environment.DIRECTORY_MUSIC) ?: context.filesDir
+        val lyricsDir = File(baseDir, "NeriPlayer/Lyrics").apply { mkdirs() }
+        val baseName = sanitizeFileName("${song.artist} - ${song.name}")
+
+        if (!lyric.isNullOrBlank()) {
+            val byId = File(lyricsDir, "${song.id}.lrc")
+            if (!byId.exists() || byId.length() == 0L) byId.writeText(lyric)
+
+            val byName = File(lyricsDir, "$baseName.lrc")
+            if (!byName.exists() || byName.length() == 0L) byName.writeText(lyric)
+        }
+
+        if (!translatedLyric.isNullOrBlank()) {
+            val byId = File(lyricsDir, "${song.id}_trans.lrc")
+            if (!byId.exists() || byId.length() == 0L) byId.writeText(translatedLyric)
+
+            val byName = File(lyricsDir, "${baseName}_trans.lrc")
+            if (!byName.exists() || byName.length() == 0L) byName.writeText(translatedLyric)
+        }
+    }
+
     /** 获取本地翻译歌词文件路径 */
     fun getTranslatedLyricFilePath(context: Context, song: SongItem): String? {
         val baseDir = context.getExternalFilesDir(Environment.DIRECTORY_MUSIC) ?: context.filesDir

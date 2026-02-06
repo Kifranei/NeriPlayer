@@ -173,6 +173,7 @@ dependencies {
 
     implementation(libs.dec)
     implementation(libs.okhttp)
+    implementation("io.github.proify.lyricon:provider:0.1.66")
 
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.serialization.protobuf)

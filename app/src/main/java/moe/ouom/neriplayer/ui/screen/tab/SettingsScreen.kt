@@ -67,6 +67,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.AltRoute
+import androidx.compose.material.icons.automirrored.outlined.PlaylistPlay
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.Check
@@ -88,7 +89,6 @@ import androidx.compose.material.icons.outlined.Wallpaper
 import androidx.compose.material.icons.outlined.ZoomInMap
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Backup
-import androidx.compose.material.icons.outlined.PlaylistPlay
 import androidx.compose.material.icons.outlined.Upload
 import androidx.compose.material.icons.outlined.Analytics
 import androidx.compose.material.icons.outlined.FormatSize
@@ -1297,7 +1297,7 @@ fun SettingsScreen(
                         ListItem(
                             leadingContent = {
                                 Icon(
-                                    Icons.Outlined.PlaylistPlay,
+                                    Icons.AutoMirrored.Outlined.PlaylistPlay,
                                     contentDescription = stringResource(R.string.settings_current_playlist),
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                                 )

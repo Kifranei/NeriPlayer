@@ -32,6 +32,7 @@ import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.net.Uri
+import android.os.SystemClock
 import android.widget.Toast
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BluetoothAudio
@@ -80,9 +81,11 @@ import moe.ouom.neriplayer.data.LocalPlaylist
 import moe.ouom.neriplayer.data.LocalPlaylistRepository
 import moe.ouom.neriplayer.ui.component.LyricEntry
 import moe.ouom.neriplayer.ui.component.parseNeteaseLrc
+import moe.ouom.neriplayer.ui.component.parseNeteaseYrc
 import moe.ouom.neriplayer.ui.viewmodel.playlist.BiliVideoItem
 import moe.ouom.neriplayer.ui.viewmodel.playlist.SongItem
 import moe.ouom.neriplayer.util.NPLogger
+import moe.ouom.neriplayer.core.lyricon.LyriconManager
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -136,6 +139,8 @@ object PlayerManager {
     private var ioScope = newIoScope()
     private var mainScope = newMainScope()
     private var progressJob: Job? = null
+    private var lyriconUpdateJob: Job? = null
+    private var lastLyriconPositionUpdateMs: Long = 0L
 
     private lateinit var localRepo: LocalPlaylistRepository
 
@@ -404,6 +409,7 @@ object PlayerManager {
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 _isPlayingFlow.value = isPlaying
+                LyriconManager.setPlaybackState(isPlaying)
                 if (isPlaying) startProgressUpdates() else stopProgressUpdates()
             }
 
@@ -623,6 +629,18 @@ object PlayerManager {
         _currentSongFlow.value = song
         ioScope.launch {
             persistState()
+        }
+
+        LyriconManager.updateSong(song, null, null)
+        lyriconUpdateJob?.cancel()
+        lyriconUpdateJob = ioScope.launch {
+            val lyrics = getLyrics(song)
+            val translatedLyrics = try {
+                getTranslatedLyrics(song)
+            } catch (_: Exception) {
+                emptyList()
+            }
+            LyriconManager.updateSong(song, lyrics, translatedLyrics)
         }
 
         // 当前曲不应再出现在洗牌袋中
@@ -1026,7 +1044,14 @@ object PlayerManager {
         stopProgressUpdates()
         progressJob = mainScope.launch {
             while (isActive) {
-                _playbackPositionMs.value = player.currentPosition
+                val pos = player.currentPosition
+                _playbackPositionMs.value = pos
+
+                val now = SystemClock.uptimeMillis()
+                if (now - lastLyriconPositionUpdateMs >= 120L) {
+                    lastLyriconPositionUpdateMs = now
+                    LyriconManager.setPosition(pos)
+                }
                 delay(40)
             }
         }
@@ -1189,13 +1214,43 @@ object PlayerManager {
     }
 
 
+    private fun parseNeteaseLyricAuto(content: String): List<LyricEntry> {
+        val yrcRegex = Regex("""\[\d+,\s*\d+]\(\d+,""")
+        return if (yrcRegex.containsMatchIn(content)) parseNeteaseYrc(content) else parseNeteaseLrc(content)
+    }
+
+    private suspend fun fetchAndCacheNeteaseLyrics(
+        context: Context,
+        songForCache: SongItem,
+        apiSongId: Long
+    ): Pair<List<LyricEntry>, List<LyricEntry>> {
+        return withContext(Dispatchers.IO) {
+            try {
+                val raw = neteaseClient.getLyricNew(apiSongId)
+                val obj = JSONObject(raw)
+                val lrc = obj.optJSONObject("lrc")?.optString("lyric") ?: ""
+                val tlyric = obj.optJSONObject("tlyric")?.optString("lyric") ?: ""
+                if (lrc.isNotBlank() || tlyric.isNotBlank()) {
+                    AudioDownloadManager.writeLyricsCacheIfAbsent(context, songForCache, lrc.ifBlank { null }, tlyric.ifBlank { null })
+                }
+
+                val base = if (lrc.isBlank()) emptyList() else parseNeteaseLyricAuto(lrc)
+                val trans = if (tlyric.isBlank()) emptyList() else parseNeteaseLrc(tlyric)
+                base to trans
+            } catch (e: Exception) {
+                NPLogger.e("NERI-PlayerManager", "fetchAndCacheNeteaseLyrics failed: ${e.message}", e)
+                emptyList<LyricEntry>() to emptyList()
+            }
+        }
+    }
+
     /** 获取网易云歌词 */
     suspend fun getNeteaseLyrics(songId: Long): List<LyricEntry> {
         return withContext(Dispatchers.IO) {
             try {
                 val raw = neteaseClient.getLyricNew(songId)
                 val lrc = JSONObject(raw).optJSONObject("lrc")?.optString("lyric") ?: ""
-                parseNeteaseLrc(lrc)
+                parseNeteaseLyricAuto(lrc)
             } catch (e: Exception) {
                 NPLogger.e("NERI-PlayerManager", "getNeteaseLyrics failed: ${e.message}", e)
                 emptyList()
@@ -1225,7 +1280,7 @@ object PlayerManager {
                 val obj = JSONObject(raw)
                 val lrc = obj.optJSONObject("lrc")?.optString("lyric") ?: ""
                 val tlyric = obj.optJSONObject("tlyric")?.optString("lyric") ?: ""
-                val base = if (lrc.isBlank()) emptyList() else parseNeteaseLrc(lrc)
+                val base = if (lrc.isBlank()) emptyList() else parseNeteaseLyricAuto(lrc)
                 val trans = if (tlyric.isBlank()) emptyList() else parseNeteaseLrc(tlyric)
                 base to trans
             } catch (e: Exception) {
@@ -1264,36 +1319,38 @@ object PlayerManager {
             return when (song.matchedLyricSource) {
                 MusicPlatform.CLOUD_MUSIC -> {
                     val matchedId = song.matchedSongId?.toLongOrNull()
-                    if (matchedId != null) getNeteaseTranslatedLyrics(matchedId) else emptyList()
+                    if (matchedId != null) fetchAndCacheNeteaseLyrics(context, song, matchedId).second else emptyList()
                 }
                 else -> emptyList()
             }
         }
 
         return when (song.matchedLyricSource) {
-            null, MusicPlatform.CLOUD_MUSIC -> getNeteaseTranslatedLyrics(song.id)
+            null, MusicPlatform.CLOUD_MUSIC -> fetchAndCacheNeteaseLyrics(context, song, song.id).second
             else -> emptyList()
         }
     }
 
     /** 获取歌词，优先使用本地缓存 */
     suspend fun getLyrics(song: SongItem): List<LyricEntry> {
+        val context = application
+
         // 最优先使用song.matchedLyric中的歌词
         if (!song.matchedLyric.isNullOrBlank()) {
             try {
-                return parseNeteaseLrc(song.matchedLyric)
+                AudioDownloadManager.writeLyricsCacheIfAbsent(context, song, song.matchedLyric, song.matchedTranslatedLyric)
+                return parseNeteaseLyricAuto(song.matchedLyric)
             } catch (e: Exception) {
                 NPLogger.w("NERI-PlayerManager", "匹配歌词解析失败: ${e.message}")
             }
         }
 
         // 其次检查本地歌词缓存
-        val context = application
         val localLyricPath = AudioDownloadManager.getLyricFilePath(context, song)
         if (localLyricPath != null) {
             try {
                 val lrcContent = File(localLyricPath).readText()
-                return parseNeteaseLrc(lrcContent)
+                return parseNeteaseLyricAuto(lrcContent)
             } catch (e: Exception) {
                 NPLogger.w("NERI-PlayerManager", "本地歌词读取失败: ${e.message}")
             }
@@ -1303,7 +1360,7 @@ object PlayerManager {
         return if (song.album.startsWith(BILI_SOURCE_TAG)) {
             emptyList() // B站暂时没有歌词API
         } else {
-            getNeteaseLyrics(song.id)
+            fetchAndCacheNeteaseLyrics(context, song, song.id).first
         }
     }
 
