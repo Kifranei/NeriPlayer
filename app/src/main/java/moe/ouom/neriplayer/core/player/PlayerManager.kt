@@ -634,12 +634,7 @@ object PlayerManager {
         LyriconManager.updateSong(song, null, null)
         lyriconUpdateJob?.cancel()
         lyriconUpdateJob = ioScope.launch {
-            val lyrics = getLyrics(song)
-            val translatedLyrics = try {
-                getTranslatedLyrics(song)
-            } catch (_: Exception) {
-                emptyList()
-            }
+            val (lyrics, translatedLyrics) = getLyricsWithTranslation(song)
             LyriconManager.updateSong(song, lyrics, translatedLyrics)
         }
 
@@ -1302,6 +1297,62 @@ object PlayerManager {
                 emptyList<LyricEntry>() to emptyList()
             }
         }
+    }
+
+    suspend fun getLyricsWithTranslation(song: SongItem): Pair<List<LyricEntry>, List<LyricEntry>> {
+        val context = application
+        val currentLocale = context.resources.configuration.locales[0]
+        val isChinese = currentLocale.language.startsWith("zh")
+
+        if (!song.matchedLyric.isNullOrBlank()) {
+            try {
+                AudioDownloadManager.writeLyricsCacheIfAbsent(context, song, song.matchedLyric, song.matchedTranslatedLyric)
+                val base = parseNeteaseLyricAuto(song.matchedLyric)
+                val trans = if (isChinese && !song.matchedTranslatedLyric.isNullOrBlank()) {
+                    parseNeteaseLrc(song.matchedTranslatedLyric)
+                } else {
+                    emptyList()
+                }
+                if (trans.isNotEmpty() || !isChinese) return base to trans
+            } catch (_: Exception) {
+            }
+        }
+
+        val localLyricPath = AudioDownloadManager.getLyricFilePath(context, song)
+        val localTransPath = if (isChinese) AudioDownloadManager.getTranslatedLyricFilePath(context, song) else null
+
+        val cachedBase = localLyricPath?.let { path ->
+            try {
+                parseNeteaseLyricAuto(File(path).readText())
+            } catch (_: Exception) {
+                null
+            }
+        }
+        val cachedTrans = localTransPath?.let { path ->
+            try {
+                parseNeteaseLrc(File(path).readText())
+            } catch (_: Exception) {
+                null
+            }
+        }
+
+        if (cachedBase != null && (!isChinese || cachedTrans != null)) {
+            return cachedBase to (cachedTrans ?: emptyList())
+        }
+
+        if (song.album.startsWith(BILI_SOURCE_TAG)) {
+            if (song.matchedLyricSource == MusicPlatform.CLOUD_MUSIC) {
+                val matchedId = song.matchedSongId?.toLongOrNull()
+                if (matchedId != null) {
+                    val (base, trans) = fetchAndCacheNeteaseLyrics(context, song, matchedId)
+                    return base to (if (isChinese) trans else emptyList())
+                }
+            }
+            return emptyList<LyricEntry>() to emptyList()
+        }
+
+        val (base, trans) = fetchAndCacheNeteaseLyrics(context, song, song.id)
+        return base to (if (isChinese) trans else emptyList())
     }
 
     /** 根据歌曲来源返回可用的翻译（如果有） */

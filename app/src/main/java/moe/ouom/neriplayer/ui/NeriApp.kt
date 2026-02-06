@@ -1119,8 +1119,8 @@ fun NeriApp(
                                     val json = Uri.encode(Gson().toJson(album))
                                     navController.navigate("netease_album_detail/$json")
                                 },
-                                lyricBlurEnabled = lyricBlurEnabled,
-                                lyricBlurAmount = lyricBlurAmount,
+                                lyricBlurEnabled = false,
+                                lyricBlurAmount = 0f,
                                 lyricFontScale = lyricFontScale,
                                 onLyricFontScaleChange = { scale ->
                                     scope.launch { repo.setLyricFontScale(scale) }

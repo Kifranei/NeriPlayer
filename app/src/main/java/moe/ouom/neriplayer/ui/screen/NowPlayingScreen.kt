@@ -282,38 +282,31 @@ fun NowPlayingScreen(
 
     LaunchedEffect(currentSong?.id, currentSong?.matchedLyric, currentSong?.matchedTranslatedLyric, isFromNetease) {
         val song = currentSong
-        lyrics = when {
-            // 优先使用匹配到的歌词
+        when {
             song?.matchedLyric != null -> {
-                if (song.matchedLyric.contains(Regex("""\[\d+,\s*\d+]\(\d+,"""))) {
+                lyrics = if (song.matchedLyric.contains(Regex("""\[\d+,\s*\d+]\(\d+,"""))) {
                     parseNeteaseYrc(song.matchedLyric)
                 } else {
                     parseNeteaseLrc(song.matchedLyric)
                 }
-            }
-            song != null -> {
-                // 在线拉取歌词
-                PlayerManager.getLyrics(song)
-            }
-            else -> {
-                emptyList()
-            }
-        }
 
-        // 同步尝试拉取翻译（仅云音乐有）
-        translatedLyrics = try {
-            when {
-                // 优先使用存储的翻译歌词
-                song?.matchedTranslatedLyric != null -> {
-                    parseNeteaseLrc(song.matchedTranslatedLyric)
+                translatedLyrics = try {
+                    if (song.matchedTranslatedLyric != null) parseNeteaseLrc(song.matchedTranslatedLyric) else emptyList()
+                } catch (_: Exception) {
+                    emptyList()
                 }
-                song != null -> {
-                    PlayerManager.getTranslatedLyrics(song)
-                }
-                else -> emptyList()
             }
-        } catch (_: Exception) {
-            emptyList()
+
+            song != null -> {
+                val (base, trans) = PlayerManager.getLyricsWithTranslation(song)
+                lyrics = base
+                translatedLyrics = trans
+            }
+
+            else -> {
+                lyrics = emptyList()
+                translatedLyrics = emptyList()
+            }
         }
     }
 

@@ -1868,11 +1868,11 @@ fun SettingsScreen(
                         )
                     },
                     headlineContent = { Text("GitHub") },
-                    supportingContent = { Text("github.com/cwuom/NeriPlayer") },
+                    supportingContent = { Text("github.com/Kifranei/NeriPlayer") },
                     modifier = Modifier.clickable {
                         val intent = Intent(
                             Intent.ACTION_VIEW,
-                            "https://github.com/cwuom/NeriPlayer".toUri()
+                            "https://github.com/Kifranei/NeriPlayer".toUri()
                         )
                         context.startActivity(intent)
                     },

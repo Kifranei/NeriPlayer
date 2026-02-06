@@ -63,6 +63,9 @@ NeriPlayer 是一个专注于「聚合多平台音视频流」的开源播放器
 - 🔐 **零云端存储**：不上传、不分发任何媒体文件；Cookie 与账号信息仅保存在本地 `DataStore`。
 - ☁️ **GitHub自动同步**：可选的歌单云端备份功能,使用GitHub私有仓库加密存储,支持多设备同步。
 
+> [!NOTE]
+> 由于渲染问题，暂时移除播放页动态高斯模糊。
+
 ---
 
 ## 架构速览 / Architecture Highlights
@@ -99,13 +102,13 @@ NeriPlayer 支持将歌单数据自动备份到 GitHub 私有仓库,实现跨设
 
 ## 快速体验 / Getting Started
 ### a. 下载 CI 版本 （推荐）
-1. 前往 [GitHub Action](https://github.com/cwuom/NeriPlayer/actions) 中点击最后一次构建成功的版本并下载 Artifacts 后解压
+1. 前往 [GitHub Action](https://github.com/Kifranei/NeriPlayer/actions) 中点击最后一次构建成功的版本并下载 Artifacts 后解压
 2. 前往 [NeriPlayer CI Builds](https://t.me/neriplayer_ci)
 
 ### b. 构建本项目
 1. 克隆仓库并使用 Android Studio（最新稳定版）打开：
    ```bash
-   git clone https://github.com/cwuom/NeriPlayer.git
+   git clone https://github.com/Kifranei/NeriPlayer.git
    cd NeriPlayer
    ```
 2. 同步依赖（首次打开 Android Studio 会自动执行）。
@@ -142,7 +145,7 @@ NeriPlayer 支持将歌单数据自动备份到 GitHub 私有仓库,实现跨设
 
 ## 问题反馈 / Bug Report
 - 反馈前请确保已开启调试模式（设置界面点击 **版本号** 7 次）。
-- 前往 [Issues](https://github.com/cwuom/NeriPlayer/issues)，按照模板提供：系统版本、机型、应用版本、复现步骤及关键日志。
+- 前往 [Issues](https://github.com/Kifranei/NeriPlayer/issues)，按照模板提供：系统版本、机型、应用版本、复现步骤及关键日志。
 - 可使用以下命令过滤调试日志：
   ```bash
   adb logcat | grep "[NeriPlayer]"
@@ -218,7 +221,7 @@ NeriPlayer 使用 **GPL-3.0** 开源许可证发布。
 <p align="center">
   <img src="https://moe-counter.lxchapu.com/:neriplayer?theme=moebooru" alt="访问计数 (Moe Counter)">
   <br/>
-  <a href="https://starchart.cc/cwuom/NeriPlayer">
-    <img src="https://starchart.cc/cwuom/NeriPlayer.svg" alt="Star 历史趋势图">
+  <a href="https://starchart.cc/Kifranei/NeriPlayer">
+    <img src="https://starchart.cc/Kifranei/NeriPlayer.svg" alt="Star 历史趋势图">
   </a>
 </p>
