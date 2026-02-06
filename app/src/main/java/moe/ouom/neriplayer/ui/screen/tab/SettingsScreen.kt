@@ -318,6 +318,12 @@ fun SettingsScreen(
     onHapticFeedbackEnabledChange: (Boolean) -> Unit,
     showLyricTranslation: Boolean,
     onShowLyricTranslationChange: (Boolean) -> Unit,
+    lyriconEnabled: Boolean,
+    onLyriconEnabledChange: (Boolean) -> Unit,
+    lyriconTranslationEnabled: Boolean,
+    onLyriconTranslationEnabledChange: (Boolean) -> Unit,
+    nowPlayingDynamicBackground: Boolean,
+    onNowPlayingDynamicBackgroundChange: (Boolean) -> Unit,
     onNavigateToDownloadManager: () -> Unit = {},
     maxCacheSizeBytes: Long,
     onMaxCacheSizeBytesChange: (Long) -> Unit,
@@ -818,6 +824,65 @@ fun SettingsScreen(
                             },
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent)
                         )
+
+                        ListItem(
+                            leadingContent = {
+                                Icon(
+                                    imageVector = Icons.Outlined.Wallpaper,
+                                    contentDescription = stringResource(R.string.settings_now_playing_dynamic_background),
+                                    modifier = Modifier.size(24.dp),
+                                    tint = MaterialTheme.colorScheme.onSurface
+                                )
+                            },
+                            headlineContent = { Text(stringResource(R.string.settings_now_playing_dynamic_background)) },
+                            supportingContent = { Text(stringResource(R.string.settings_now_playing_dynamic_background_desc)) },
+                            trailingContent = {
+                                Switch(
+                                    checked = nowPlayingDynamicBackground,
+                                    onCheckedChange = onNowPlayingDynamicBackgroundChange
+                                )
+                            },
+                            colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                        )
+
+                        ListItem(
+                            leadingContent = {
+                                Icon(
+                                    imageVector = Icons.Outlined.Verified,
+                                    contentDescription = stringResource(R.string.settings_lyricon_enabled),
+                                    modifier = Modifier.size(24.dp),
+                                    tint = MaterialTheme.colorScheme.onSurface
+                                )
+                            },
+                            headlineContent = { Text(stringResource(R.string.settings_lyricon_enabled)) },
+                            supportingContent = { Text(stringResource(R.string.settings_lyricon_enabled_desc)) },
+                            trailingContent = {
+                                Switch(checked = lyriconEnabled, onCheckedChange = onLyriconEnabledChange)
+                            },
+                            colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                        )
+
+                        AnimatedVisibility(visible = lyriconEnabled) {
+                            ListItem(
+                                leadingContent = {
+                                    Icon(
+                                        imageVector = Icons.Outlined.Subtitles,
+                                        contentDescription = stringResource(R.string.settings_lyricon_translation_enabled),
+                                        modifier = Modifier.size(24.dp),
+                                        tint = MaterialTheme.colorScheme.onSurface
+                                    )
+                                },
+                                headlineContent = { Text(stringResource(R.string.settings_lyricon_translation_enabled)) },
+                                supportingContent = { Text(stringResource(R.string.settings_lyricon_translation_enabled_desc)) },
+                                trailingContent = {
+                                    Switch(
+                                        checked = lyriconTranslationEnabled,
+                                        onCheckedChange = onLyriconTranslationEnabledChange
+                                    )
+                                },
+                                colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                            )
+                        }
 
                         ListItem(
                             leadingContent = {

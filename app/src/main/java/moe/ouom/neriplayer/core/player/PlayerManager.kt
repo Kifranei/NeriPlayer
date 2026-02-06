@@ -141,6 +141,8 @@ object PlayerManager {
     private var progressJob: Job? = null
     private var lyriconUpdateJob: Job? = null
     private var lastLyriconPositionUpdateMs: Long = 0L
+    private var lyriconEnabled: Boolean = true
+    private var lyriconTranslationEnabled: Boolean = true
 
     private lateinit var localRepo: LocalPlaylistRepository
 
@@ -409,7 +411,9 @@ object PlayerManager {
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 _isPlayingFlow.value = isPlaying
-                LyriconManager.setPlaybackState(isPlaying)
+                if (lyriconEnabled) {
+                    LyriconManager.setPlaybackState(isPlaying)
+                }
                 if (isPlaying) startProgressUpdates() else stopProgressUpdates()
             }
 
@@ -433,6 +437,49 @@ object PlayerManager {
         }
         ioScope.launch {
             settingsRepo.biliAudioQualityFlow.collect { q -> biliPreferredQuality = q }
+        }
+
+        ioScope.launch {
+            settingsRepo.lyriconEnabledFlow.collect { enabled ->
+                lyriconEnabled = enabled
+                if (!enabled) {
+                    lyriconUpdateJob?.cancel()
+                    LyriconManager.setEnabled(application, false)
+                } else {
+                    LyriconManager.setEnabled(application, true)
+                    val song = _currentSongFlow.value
+                    if (song != null) {
+                        LyriconManager.updateSong(song, null, null)
+                        lyriconUpdateJob?.cancel()
+                        lyriconUpdateJob = ioScope.launch {
+                            val (lyrics, translatedLyrics) = getLyricsWithTranslation(
+                                song,
+                                allowTranslation = lyriconTranslationEnabled
+                            )
+                            LyriconManager.updateSong(song, lyrics, translatedLyrics)
+                        }
+                    }
+                }
+            }
+        }
+
+        ioScope.launch {
+            settingsRepo.lyriconTranslationEnabledFlow.collect { enabled ->
+                lyriconTranslationEnabled = enabled
+                LyriconManager.setTranslationEnabled(enabled)
+
+                val song = _currentSongFlow.value
+                if (lyriconEnabled && song != null) {
+                    lyriconUpdateJob?.cancel()
+                    lyriconUpdateJob = ioScope.launch {
+                        val (lyrics, translatedLyrics) = getLyricsWithTranslation(
+                            song,
+                            allowTranslation = lyriconTranslationEnabled
+                        )
+                        LyriconManager.updateSong(song, lyrics, translatedLyrics)
+                    }
+                }
+            }
         }
 
         // 同步本地歌单
@@ -631,11 +678,16 @@ object PlayerManager {
             persistState()
         }
 
-        LyriconManager.updateSong(song, null, null)
         lyriconUpdateJob?.cancel()
-        lyriconUpdateJob = ioScope.launch {
-            val (lyrics, translatedLyrics) = getLyricsWithTranslation(song)
-            LyriconManager.updateSong(song, lyrics, translatedLyrics)
+        if (lyriconEnabled) {
+            LyriconManager.updateSong(song, null, null)
+            lyriconUpdateJob = ioScope.launch {
+                val (lyrics, translatedLyrics) = getLyricsWithTranslation(
+                    song,
+                    allowTranslation = lyriconTranslationEnabled
+                )
+                LyriconManager.updateSong(song, lyrics, translatedLyrics)
+            }
         }
 
         // 当前曲不应再出现在洗牌袋中
@@ -1043,7 +1095,7 @@ object PlayerManager {
                 _playbackPositionMs.value = pos
 
                 val now = SystemClock.uptimeMillis()
-                if (now - lastLyriconPositionUpdateMs >= 60L) {
+                if (lyriconEnabled && now - lastLyriconPositionUpdateMs >= 250L) {
                     lastLyriconPositionUpdateMs = now
                     val leadMs = 80L
                     val duration = player.duration
@@ -1299,27 +1351,31 @@ object PlayerManager {
         }
     }
 
-    suspend fun getLyricsWithTranslation(song: SongItem): Pair<List<LyricEntry>, List<LyricEntry>> {
+    suspend fun getLyricsWithTranslation(
+        song: SongItem,
+        allowTranslation: Boolean = true
+    ): Pair<List<LyricEntry>, List<LyricEntry>> {
         val context = application
         val currentLocale = context.resources.configuration.locales[0]
         val isChinese = currentLocale.language.startsWith("zh")
+        val wantTranslation = allowTranslation && isChinese
 
         if (!song.matchedLyric.isNullOrBlank()) {
             try {
                 AudioDownloadManager.writeLyricsCacheIfAbsent(context, song, song.matchedLyric, song.matchedTranslatedLyric)
                 val base = parseNeteaseLyricAuto(song.matchedLyric)
-                val trans = if (isChinese && !song.matchedTranslatedLyric.isNullOrBlank()) {
+                val trans = if (wantTranslation && !song.matchedTranslatedLyric.isNullOrBlank()) {
                     parseNeteaseLrc(song.matchedTranslatedLyric)
                 } else {
                     emptyList()
                 }
-                if (trans.isNotEmpty() || !isChinese) return base to trans
+                if (trans.isNotEmpty() || !wantTranslation) return base to trans
             } catch (_: Exception) {
             }
         }
 
         val localLyricPath = AudioDownloadManager.getLyricFilePath(context, song)
-        val localTransPath = if (isChinese) AudioDownloadManager.getTranslatedLyricFilePath(context, song) else null
+        val localTransPath = if (wantTranslation) AudioDownloadManager.getTranslatedLyricFilePath(context, song) else null
 
         val cachedBase = localLyricPath?.let { path ->
             try {
@@ -1336,7 +1392,7 @@ object PlayerManager {
             }
         }
 
-        if (cachedBase != null && (!isChinese || cachedTrans != null)) {
+        if (cachedBase != null && (!wantTranslation || cachedTrans != null)) {
             return cachedBase to (cachedTrans ?: emptyList())
         }
 
@@ -1345,14 +1401,14 @@ object PlayerManager {
                 val matchedId = song.matchedSongId?.toLongOrNull()
                 if (matchedId != null) {
                     val (base, trans) = fetchAndCacheNeteaseLyrics(context, song, matchedId)
-                    return base to (if (isChinese) trans else emptyList())
+                    return base to (if (wantTranslation) trans else emptyList())
                 }
             }
             return emptyList<LyricEntry>() to emptyList()
         }
 
         val (base, trans) = fetchAndCacheNeteaseLyrics(context, song, song.id)
-        return base to (if (isChinese) trans else emptyList())
+        return base to (if (wantTranslation) trans else emptyList())
     }
 
     /** 根据歌曲来源返回可用的翻译（如果有） */

@@ -64,6 +64,9 @@ object SettingsKeys {
     val SLEEP_TIMER_MODE = stringPreferencesKey("sleep_timer_mode")
     val SLEEP_TIMER_MINUTES = longPreferencesKey("sleep_timer_minutes")
     val SHOW_LYRIC_TRANSLATION = booleanPreferencesKey("show_lyric_translation")
+    val LYRICON_ENABLED = booleanPreferencesKey("lyricon_enabled")
+    val LYRICON_TRANSLATION_ENABLED = booleanPreferencesKey("lyricon_translation_enabled")
+    val NOW_PLAYING_DYNAMIC_BACKGROUND = booleanPreferencesKey("now_playing_dynamic_background")
 }
 
 
@@ -159,6 +162,15 @@ class SettingsRepository(private val context: Context) {
 
     val showLyricTranslationFlow: Flow<Boolean> =
         context.dataStore.data.map { it[SettingsKeys.SHOW_LYRIC_TRANSLATION] ?: true }
+
+    val lyriconEnabledFlow: Flow<Boolean> =
+        context.dataStore.data.map { it[SettingsKeys.LYRICON_ENABLED] ?: true }
+
+    val lyriconTranslationEnabledFlow: Flow<Boolean> =
+        context.dataStore.data.map { it[SettingsKeys.LYRICON_TRANSLATION_ENABLED] ?: true }
+
+    val nowPlayingDynamicBackgroundFlow: Flow<Boolean> =
+        context.dataStore.data.map { it[SettingsKeys.NOW_PLAYING_DYNAMIC_BACKGROUND] ?: false }
 
     suspend fun setDynamicColor(value: Boolean) {
         context.dataStore.edit { it[SettingsKeys.DYNAMIC_COLOR] = value }
@@ -290,6 +302,18 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setShowLyricTranslation(enabled: Boolean) {
         context.dataStore.edit { it[SettingsKeys.SHOW_LYRIC_TRANSLATION] = enabled }
+    }
+
+    suspend fun setLyriconEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[SettingsKeys.LYRICON_ENABLED] = enabled }
+    }
+
+    suspend fun setLyriconTranslationEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[SettingsKeys.LYRICON_TRANSLATION_ENABLED] = enabled }
+    }
+
+    suspend fun setNowPlayingDynamicBackground(enabled: Boolean) {
+        context.dataStore.edit { it[SettingsKeys.NOW_PLAYING_DYNAMIC_BACKGROUND] = enabled }
     }
 
     /** 备用：一次性读取（非 Compose 场景） */

@@ -3,21 +3,26 @@ package moe.ouom.neriplayer.core.lyricon
 import android.content.Context
 import io.github.proify.lyricon.provider.LyriconFactory
 import io.github.proify.lyricon.provider.LyriconProvider
+import io.github.proify.lyricon.provider.ProviderLogo
 import io.github.proify.lyricon.lyric.model.LyricWord
 import io.github.proify.lyricon.lyric.model.RichLyricLine
 import io.github.proify.lyricon.lyric.model.Song
 import io.github.proify.lyricon.provider.service.addConnectionListener
+import moe.ouom.neriplayer.R
 import moe.ouom.neriplayer.ui.component.LyricEntry
 import moe.ouom.neriplayer.ui.viewmodel.playlist.SongItem
 import moe.ouom.neriplayer.util.NPLogger
 
 object LyriconManager {
     private var provider: LyriconProvider? = null
+    private var translationEnabled: Boolean = true
+    private var lastHasTranslation: Boolean = false
 
     fun initialize(context: Context) {
         if (provider != null) return
         try {
-            provider = LyriconFactory.createProvider(context)
+            val logo = runCatching { ProviderLogo.fromDrawable(context, R.mipmap.ic_launcher) }.getOrNull()
+            provider = LyriconFactory.createProvider(context, logo = logo)
             provider?.register()
             
             provider?.service?.addConnectionListener {
@@ -28,6 +33,28 @@ object LyriconManager {
             }
         } catch (e: Exception) {
             NPLogger.e("LyriconManager", "Failed to initialize LyriconProvider", e)
+        }
+    }
+
+    fun setEnabled(context: Context, enabled: Boolean) {
+        if (enabled) {
+            initialize(context)
+        } else {
+            try {
+                provider?.unregister()
+                provider?.destroy()
+            } catch (_: Exception) {
+            } finally {
+                provider = null
+            }
+        }
+    }
+
+    fun setTranslationEnabled(enabled: Boolean) {
+        translationEnabled = enabled
+        try {
+            provider?.player?.setDisplayTranslation(enabled && lastHasTranslation)
+        } catch (_: Exception) {
         }
     }
 
@@ -49,6 +76,9 @@ object LyriconManager {
 
     fun updateSong(song: SongItem, lyrics: List<LyricEntry>?, translatedLyrics: List<LyricEntry>?) {
         try {
+            val effectiveTranslatedLyrics = if (translationEnabled) translatedLyrics else null
+            lastHasTranslation = effectiveTranslatedLyrics?.isNotEmpty() == true
+
             val translationToleranceMs = 1_500L
             val lyriconLyrics = lyrics?.map { entry ->
                 val words = if (entry.words != null) {
@@ -73,7 +103,7 @@ object LyriconManager {
                     end = entry.endTimeMs,
                     text = entry.text,
                     words = words,
-                    translation = translatedLyrics
+                    translation = effectiveTranslatedLyrics
                         ?.firstOrNull { kotlin.math.abs(it.startTimeMs - entry.startTimeMs) <= translationToleranceMs }
                         ?.text
                 )
@@ -90,7 +120,7 @@ object LyriconManager {
             provider?.player?.setSong(lyriconSong)
             
             // Set translation display if available
-            provider?.player?.setDisplayTranslation(translatedLyrics?.isNotEmpty() == true)
+            provider?.player?.setDisplayTranslation(translationEnabled && lastHasTranslation)
 
         } catch (e: Exception) {
             NPLogger.e("LyriconManager", "updateSong failed", e)

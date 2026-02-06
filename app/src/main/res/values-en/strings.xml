@@ -154,6 +154,12 @@
     <string name="settings_audio_quality_expand">Configure audio quality</string>
     <string name="settings_show_lyric_translation">Show Translation</string>
     <string name="settings_show_lyric_translation_desc">Show translated lyrics</string>
+    <string name="settings_lyricon_enabled">Lyricon Status Bar Lyrics</string>
+    <string name="settings_lyricon_enabled_desc">Push lyrics and progress to Lyricon/System UI</string>
+    <string name="settings_lyricon_translation_enabled">Lyricon Translation</string>
+    <string name="settings_lyricon_translation_enabled_desc">Send translation to Lyricon when available</string>
+    <string name="settings_now_playing_dynamic_background">Now Playing Dynamic Background</string>
+    <string name="settings_now_playing_dynamic_background_desc">Enable fluid background effect (higher power)</string>
     <string name="settings_network">Network</string>
     <string name="settings_bypass_proxy">Bypass System Proxy</string>
     <string name="settings_bypass_proxy_desc">Don\'t use system proxy for app requests</string>

@@ -129,6 +129,7 @@ import moe.ouom.neriplayer.ui.screen.playlist.LocalPlaylistDetailScreen
 import moe.ouom.neriplayer.ui.screen.playlist.NeteaseAlbumDetailScreen
 import moe.ouom.neriplayer.ui.screen.playlist.NeteasePlaylistDetailScreen
 import moe.ouom.neriplayer.ui.theme.NeriTheme
+import moe.ouom.neriplayer.ui.view.CoverBlurBackground
 import moe.ouom.neriplayer.ui.view.HyperBackground
 import moe.ouom.neriplayer.ui.viewmodel.debug.LogViewerScreen
 import moe.ouom.neriplayer.ui.viewmodel.tab.NeteaseAlbum
@@ -279,6 +280,9 @@ fun NeriApp(
     val backgroundImageAlpha by repo.backgroundImageAlphaFlow.collectAsState(initial = 0.3f)
     val hapticFeedbackEnabled by repo.hapticFeedbackEnabledFlow.collectAsState(initial = true)
     val showLyricTranslation by repo.showLyricTranslationFlow.collectAsState(initial = true)
+    val lyriconEnabled by repo.lyriconEnabledFlow.collectAsState(initial = true)
+    val lyriconTranslationEnabled by repo.lyriconTranslationEnabledFlow.collectAsState(initial = true)
+    val nowPlayingDynamicBackground by repo.nowPlayingDynamicBackgroundFlow.collectAsState(initial = false)
     val maxCacheSizeBytes by repo.maxCacheSizeBytesFlow.collectAsState(initial = 1024L * 1024 * 1024)
     val hazeState = remember { HazeState() }
 
@@ -389,8 +393,8 @@ fun NeriApp(
 
             val snackbarHostState = remember { SnackbarHostState() }
 
-            DisposableEffect(showNowPlaying) {
-                AudioReactive.enabled = showNowPlaying
+            DisposableEffect(showNowPlaying, nowPlayingDynamicBackground) {
+                AudioReactive.enabled = showNowPlaying && nowPlayingDynamicBackground
                 onDispose { AudioReactive.enabled = false }
             }
 
@@ -902,6 +906,18 @@ fun NeriApp(
                                         onShowLyricTranslationChange = { enabled ->
                                             scope.launch { repo.setShowLyricTranslation(enabled) }
                                         },
+                                        lyriconEnabled = lyriconEnabled,
+                                        onLyriconEnabledChange = { enabled ->
+                                            scope.launch { repo.setLyriconEnabled(enabled) }
+                                        },
+                                        lyriconTranslationEnabled = lyriconTranslationEnabled,
+                                        onLyriconTranslationEnabledChange = { enabled ->
+                                            scope.launch { repo.setLyriconTranslationEnabled(enabled) }
+                                        },
+                                        nowPlayingDynamicBackground = nowPlayingDynamicBackground,
+                                        onNowPlayingDynamicBackgroundChange = { enabled ->
+                                            scope.launch { repo.setNowPlayingDynamicBackground(enabled) }
+                                        },
                                         maxCacheSizeBytes = maxCacheSizeBytes,
                                         onMaxCacheSizeBytesChange = { size ->
                                             scope.launch { repo.setMaxCacheSizeBytes(size) }
@@ -1105,13 +1121,20 @@ fun NeriApp(
                                 modifier = Modifier.fillMaxSize()
                             )
 
-                            HyperBackground(
-                                modifier = Modifier
-                                    .matchParentSize()
-                                    .graphicsLayer { alpha = 0.80f },
-                                isDark = true,
-                                coverUrl = currentSongNP?.coverUrl
-                            )
+                            if (nowPlayingDynamicBackground) {
+                                HyperBackground(
+                                    modifier = Modifier
+                                        .matchParentSize()
+                                        .graphicsLayer { alpha = 0.80f },
+                                    isDark = true,
+                                    coverUrl = currentSongNP?.coverUrl
+                                )
+                            } else {
+                                CoverBlurBackground(
+                                    coverUrl = currentSongNP?.coverUrl,
+                                    modifier = Modifier.matchParentSize()
+                                )
+                            }
 
                             NowPlayingScreen(
                                 onNavigateUp = { showNowPlaying = false },
