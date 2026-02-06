@@ -560,6 +560,17 @@ fun Modifier.multilineGradientReveal(
 
                 // 计算渐变范围
                 val fadePx = fadeWidth.toPx()
+                if (fadePx <= 0.5f) {
+                    clipRect(
+                        left = lineLeft,
+                        top = layout.getLineTop(lineIndex),
+                        right = x,
+                        bottom = layout.getLineBottom(lineIndex)
+                    ) {
+                        this@drawWithContent.drawContent()
+                    }
+                    continue
+                }
                 val start = (x - fadePx).coerceAtLeast(lineLeft)
 
                 // 裁剪并绘制当前行的渐变高亮
@@ -660,6 +671,8 @@ fun AppleMusicActiveLine(
         letterSpacing = 0.sp  // 禁用字符间距调整，确保测量和渲染一致
     )
 
+    val effectiveFadeWidth = if (line.words.isNullOrEmpty()) fadeWidth else 0.dp
+
     Box(
         modifier = Modifier.drawBehind {
             if (layout != null && headGlowRadiusPx > 0f) {
@@ -698,7 +711,7 @@ fun AppleMusicActiveLine(
                     layout = layout,
                     revealOffsetChars = revealOffsetChars,
                     textLength = line.text.length,
-                    fadeWidth = fadeWidth
+                    fadeWidth = effectiveFadeWidth
                 )
             )
         }
