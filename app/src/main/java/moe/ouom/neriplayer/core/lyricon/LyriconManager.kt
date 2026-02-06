@@ -49,6 +49,7 @@ object LyriconManager {
 
     fun updateSong(song: SongItem, lyrics: List<LyricEntry>?, translatedLyrics: List<LyricEntry>?) {
         try {
+            val translationToleranceMs = 1_500L
             val lyriconLyrics = lyrics?.map { entry ->
                 val words = if (entry.words != null) {
                     var currentIndex = 0
@@ -72,9 +73,9 @@ object LyriconManager {
                     end = entry.endTimeMs,
                     text = entry.text,
                     words = words,
-                    translation = translatedLyrics?.find { 
-                        it.startTimeMs == entry.startTimeMs
-                    }?.text
+                    translation = translatedLyrics
+                        ?.firstOrNull { kotlin.math.abs(it.startTimeMs - entry.startTimeMs) <= translationToleranceMs }
+                        ?.text
                 )
             } ?: emptyList()
 

@@ -320,18 +320,22 @@ fun AppleMusicLyric(
                             blurForDistance(distance, lyricBlurAmount)
                         }
 
-                        var blurEffect: androidx.compose.ui.graphics.RenderEffect? = null
-                        var shadowEffect: Shadow? = null
-
-                        if (blurRadiusPx > 0.1f) {
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                                blurEffect = BlurEffect(blurRadiusPx, blurRadiusPx, TileMode.Decal)
+                        val blurEffect = remember(blurRadiusPx) {
+                            if (blurRadiusPx > 0.1f && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                                BlurEffect(blurRadiusPx, blurRadiusPx, TileMode.Clamp)
                             } else {
-                                shadowEffect = Shadow(
+                                null
+                            }
+                        }
+                        val shadowEffect = remember(blurRadiusPx, textColor) {
+                            if (blurRadiusPx > 0.1f && Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+                                Shadow(
                                     color = textColor.copy(alpha = 0.28f),
                                     offset = Offset.Zero,
                                     blurRadius = blurRadiusPx
                                 )
+                            } else {
+                                null
                             }
                         }
 
@@ -568,11 +572,16 @@ fun Modifier.multilineGradientReveal(
                     this@drawWithContent.drawContent()
 
                     // 绘制渐变遮罩
+                    val lineWidth = (lineRight - lineLeft).coerceAtLeast(1f)
+                    val s1 = ((start - lineLeft) / lineWidth).coerceIn(0f, 1f)
+                    val s2 = ((x - lineLeft) / lineWidth).coerceIn(0f, 1f)
+                    val leftStop = minOf(s1, s2)
+                    val rightStop = maxOf(s1, s2)
                     val brush = Brush.horizontalGradient(
                         colorStops = arrayOf(
                             0f to Color.White,
-                            ((start - lineLeft) / (lineRight - lineLeft)) to Color.White,
-                            ((x - lineLeft) / (lineRight - lineLeft)) to Color.Transparent,
+                            leftStop to Color.White,
+                            rightStop to Color.Transparent,
                             1f to Color.Transparent
                         ),
                         startX = lineLeft,
@@ -781,8 +790,8 @@ private fun DrawScope.drawRadialHeadGlow(
         }
     }
 
-    val cx = x0 + (x1 - x0) * fraction
-    val cy = y0 + (y1 - y0) * fraction
+    val cx = if (nextLine == currentLine) x0 + (x1 - x0) * fraction else x0
+    val cy = if (nextLine == currentLine) y0 + (y1 - y0) * fraction else y0
 
     drawCircle(
         brush = Brush.radialGradient(
