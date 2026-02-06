@@ -59,7 +59,7 @@ NeriPlayer 是一个专注于「聚合多平台音视频流」的开源播放器
 - 🧠 **自研播放器管理器**：`PlayerManager` 统一处理播放队列、缓存、失败重试与洗牌逻辑。
 - 🌈 **Material You & Compose**：全局动态色彩、沉浸式背景渲染与可组合式 UI 组件库。
 - 🪄 **音频可视化背景**：基于 `ReactiveRenderersFactory` + RuntimeShader 的实时音频反应效果。
-- 🎼 **词幕（Lyricon）状态栏歌词**：通过 Lyricon Provider 向系统/词幕模块推送歌词与进度。
+- 🎼 **词幕（Lyricon）状态栏歌词**：通过 Lyricon Provider 向系统/词幕模块推送歌词与进度（支持逐字歌词）。
 - 🔐 **零云端存储**：不上传、不分发任何媒体文件；Cookie 与账号信息仅保存在本地 `DataStore`。
 - ☁️ **GitHub自动同步**：可选的歌单云端备份功能,使用GitHub私有仓库加密存储,支持多设备同步。
 

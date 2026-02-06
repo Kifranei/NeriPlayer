@@ -1228,13 +1228,15 @@ object PlayerManager {
             try {
                 val raw = neteaseClient.getLyricNew(apiSongId)
                 val obj = JSONObject(raw)
+                val yrc = obj.optJSONObject("yrc")?.optString("lyric") ?: ""
                 val lrc = obj.optJSONObject("lrc")?.optString("lyric") ?: ""
                 val tlyric = obj.optJSONObject("tlyric")?.optString("lyric") ?: ""
-                if (lrc.isNotBlank() || tlyric.isNotBlank()) {
-                    AudioDownloadManager.writeLyricsCacheIfAbsent(context, songForCache, lrc.ifBlank { null }, tlyric.ifBlank { null })
+                val mainLyric = if (yrc.isNotBlank()) yrc else lrc
+                if (mainLyric.isNotBlank() || tlyric.isNotBlank()) {
+                    AudioDownloadManager.writeLyricsCacheIfAbsent(context, songForCache, mainLyric.ifBlank { null }, tlyric.ifBlank { null })
                 }
 
-                val base = if (lrc.isBlank()) emptyList() else parseNeteaseLyricAuto(lrc)
+                val base = if (mainLyric.isBlank()) emptyList() else parseNeteaseLyricAuto(mainLyric)
                 val trans = if (tlyric.isBlank()) emptyList() else parseNeteaseLrc(tlyric)
                 base to trans
             } catch (e: Exception) {
@@ -1249,8 +1251,11 @@ object PlayerManager {
         return withContext(Dispatchers.IO) {
             try {
                 val raw = neteaseClient.getLyricNew(songId)
-                val lrc = JSONObject(raw).optJSONObject("lrc")?.optString("lyric") ?: ""
-                parseNeteaseLyricAuto(lrc)
+                val obj = JSONObject(raw)
+                val yrc = obj.optJSONObject("yrc")?.optString("lyric") ?: ""
+                val lrc = obj.optJSONObject("lrc")?.optString("lyric") ?: ""
+                val mainLyric = if (yrc.isNotBlank()) yrc else lrc
+                parseNeteaseLyricAuto(mainLyric)
             } catch (e: Exception) {
                 NPLogger.e("NERI-PlayerManager", "getNeteaseLyrics failed: ${e.message}", e)
                 emptyList()
@@ -1278,9 +1283,11 @@ object PlayerManager {
             try {
                 val raw = neteaseClient.getLyricNew(songId)
                 val obj = JSONObject(raw)
+                val yrc = obj.optJSONObject("yrc")?.optString("lyric") ?: ""
                 val lrc = obj.optJSONObject("lrc")?.optString("lyric") ?: ""
                 val tlyric = obj.optJSONObject("tlyric")?.optString("lyric") ?: ""
-                val base = if (lrc.isBlank()) emptyList() else parseNeteaseLyricAuto(lrc)
+                val mainLyric = if (yrc.isNotBlank()) yrc else lrc
+                val base = if (mainLyric.isBlank()) emptyList() else parseNeteaseLyricAuto(mainLyric)
                 val trans = if (tlyric.isBlank()) emptyList() else parseNeteaseLrc(tlyric)
                 base to trans
             } catch (e: Exception) {
