@@ -130,7 +130,6 @@ fun HyperBackground(
                             .generate()
                     }
 
-                    // dominant / lightVibrant / muted / darkMuted
                     fun pickColor(vararg candidates: Int?): Int {
                         val ok = candidates.firstOrNull { it != null && it != 0 } ?: 0xFF808080.toInt()
                         return ok
@@ -181,8 +180,8 @@ fun HyperBackground(
                     }
                     val L = luma(c1)
                     val lightOffset = when {
-                        currentIsDark -> (-0.06f + (0.12f * (L - 0.5f)))  // 暗色下略降亮，偏亮封面就少降一点
-                        else          -> ( 0.08f + (0.10f * (0.5f - L)))  // 亮色下略升亮，偏暗封面就多升一点
+                        currentIsDark -> (-0.06f + (0.12f * (L - 0.5f)))
+                        else          -> ( 0.08f + (0.10f * (0.5f - L)))
                     }.coerceIn(-0.12f, 0.12f)
 
                     val saturateOffset = (if (currentIsDark) 0.24f else 0.16f)
@@ -198,7 +197,6 @@ fun HyperBackground(
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            v.setRenderEffect(painter.renderEffect)
             var startNs = 0L
             var beatEnv = 0f
             while (isActive) {
@@ -213,7 +211,7 @@ fun HyperBackground(
                     val w = v.width; val h = v.height
                     if (w > 0 && h > 0) painter.setResolution(floatArrayOf(w.toFloat(), h.toFloat()))
                     painter.updateMaterials()
-                    v.invalidate()
+                    v.setRenderEffect(painter.renderEffect)
                 }
             }
         }

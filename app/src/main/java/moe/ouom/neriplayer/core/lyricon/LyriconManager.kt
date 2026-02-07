@@ -3,12 +3,10 @@ package moe.ouom.neriplayer.core.lyricon
 import android.content.Context
 import io.github.proify.lyricon.provider.LyriconFactory
 import io.github.proify.lyricon.provider.LyriconProvider
-import io.github.proify.lyricon.provider.ProviderLogo
 import io.github.proify.lyricon.lyric.model.LyricWord
 import io.github.proify.lyricon.lyric.model.RichLyricLine
 import io.github.proify.lyricon.lyric.model.Song
 import io.github.proify.lyricon.provider.service.addConnectionListener
-import moe.ouom.neriplayer.R
 import moe.ouom.neriplayer.ui.component.LyricEntry
 import moe.ouom.neriplayer.ui.viewmodel.playlist.SongItem
 import moe.ouom.neriplayer.util.NPLogger
@@ -21,8 +19,7 @@ object LyriconManager {
     fun initialize(context: Context) {
         if (provider != null) return
         try {
-            val logo = runCatching { ProviderLogo.fromDrawable(context, R.mipmap.ic_launcher) }.getOrNull()
-            provider = LyriconFactory.createProvider(context, logo = logo)
+            provider = LyriconFactory.createProvider(context)
             provider?.register()
             
             provider?.service?.addConnectionListener {
