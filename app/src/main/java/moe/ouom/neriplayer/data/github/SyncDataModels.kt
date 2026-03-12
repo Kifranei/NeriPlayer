@@ -1,3 +1,5 @@
+@file:OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+
 package moe.ouom.neriplayer.data.github
 
 /*
@@ -25,8 +27,11 @@ package moe.ouom.neriplayer.data.github
 
 import android.content.Context
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.protobuf.ProtoNumber
+import moe.ouom.neriplayer.data.SystemLocalPlaylists
 import moe.ouom.neriplayer.core.api.search.MusicPlatform
 import moe.ouom.neriplayer.data.FavoritePlaylist
+import moe.ouom.neriplayer.data.LocalSongSupport
 import moe.ouom.neriplayer.data.LocalPlaylist
 import moe.ouom.neriplayer.ui.viewmodel.playlist.SongItem
 
@@ -36,14 +41,14 @@ import moe.ouom.neriplayer.ui.viewmodel.playlist.SongItem
  */
 @Serializable
 data class SyncData(
-    val version: String = "2.0",
-    val deviceId: String,
-    val deviceName: String,
-    val lastModified: Long = System.currentTimeMillis(),
-    val playlists: List<SyncPlaylist> = emptyList(),
-    val favoritePlaylists: List<SyncFavoritePlaylist> = emptyList(),
-    val recentPlays: List<SyncRecentPlay> = emptyList(),
-    val syncLog: List<SyncLogEntry> = emptyList()
+    @ProtoNumber(1) val version: String = "2.0",
+    @ProtoNumber(2) val deviceId: String,
+    @ProtoNumber(3) val deviceName: String,
+    @ProtoNumber(4) val lastModified: Long = System.currentTimeMillis(),
+    @ProtoNumber(5) val playlists: List<SyncPlaylist> = emptyList(),
+    @ProtoNumber(6) val favoritePlaylists: List<SyncFavoritePlaylist> = emptyList(),
+    @ProtoNumber(7) val recentPlays: List<SyncRecentPlay> = emptyList(),
+    @ProtoNumber(8) val syncLog: List<SyncLogEntry> = emptyList()
 )
 
 /**
@@ -52,19 +57,22 @@ data class SyncData(
  */
 @Serializable
 data class SyncPlaylist(
-    val id: Long,
-    val name: String,
-    val songs: List<SyncSong>,
-    val createdAt: Long,
-    val modifiedAt: Long,
-    val isDeleted: Boolean = false
+    @ProtoNumber(1) val id: Long,
+    @ProtoNumber(2) val name: String,
+    @ProtoNumber(3) val songs: List<SyncSong>,
+    @ProtoNumber(4) val createdAt: Long,
+    @ProtoNumber(5) val modifiedAt: Long,
+    @ProtoNumber(6) val isDeleted: Boolean = false
 ) {
     companion object {
         fun fromLocalPlaylist(playlist: LocalPlaylist, modifiedAt: Long = System.currentTimeMillis(), context: Context? = null): SyncPlaylist {
+            val systemDescriptor = context?.let {
+                SystemLocalPlaylists.resolve(playlist.id, playlist.name, it)
+            }
             return SyncPlaylist(
-                id = playlist.id,
-                name = playlist.name,
-                songs = playlist.songs.map { SyncSong.fromSongItem(it, context) },
+                id = systemDescriptor?.id ?: playlist.id,
+                name = systemDescriptor?.currentName ?: playlist.name,
+                songs = playlist.songs.mapNotNull { SyncSong.fromSongItemOrNull(it, context) },
                 createdAt = playlist.id, // 使用ID作为创建时间
                 modifiedAt = modifiedAt
             )
@@ -86,29 +94,37 @@ data class SyncPlaylist(
  */
 @Serializable
 data class SyncSong(
-    val id: Long,
-    val name: String,
-    val artist: String,
-    val album: String,
-    val albumId: Long,
-    val durationMs: Long,
-    val coverUrl: String?,
-    val addedAt: Long = System.currentTimeMillis(),
-    val matchedLyric: String? = null,
-    val matchedTranslatedLyric: String? = null,
-    val matchedLyricSource: String? = null,
-    val matchedSongId: String? = null,
-    val userLyricOffsetMs: Long = 0L,
-    val customCoverUrl: String? = null,
-    val customName: String? = null,
-    val customArtist: String? = null,
-    val originalName: String? = null,
-    val originalArtist: String? = null,
-    val originalCoverUrl: String? = null,
-    val originalLyric: String? = null,
-    val originalTranslatedLyric: String? = null
+    @ProtoNumber(1) val id: Long,
+    @ProtoNumber(2) val name: String,
+    @ProtoNumber(3) val artist: String,
+    @ProtoNumber(4) val album: String,
+    @ProtoNumber(5) val albumId: Long,
+    @ProtoNumber(6) val durationMs: Long,
+    @ProtoNumber(7) val coverUrl: String?,
+    @ProtoNumber(8) val mediaUri: String? = null,
+    @ProtoNumber(9) val addedAt: Long = System.currentTimeMillis(),
+    @ProtoNumber(10) val matchedLyric: String? = null,
+    @ProtoNumber(11) val matchedTranslatedLyric: String? = null,
+    @ProtoNumber(12) val matchedLyricSource: String? = null,
+    @ProtoNumber(13) val matchedSongId: String? = null,
+    @ProtoNumber(14) val userLyricOffsetMs: Long = 0L,
+    @ProtoNumber(15) val customCoverUrl: String? = null,
+    @ProtoNumber(16) val customName: String? = null,
+    @ProtoNumber(17) val customArtist: String? = null,
+    @ProtoNumber(18) val originalName: String? = null,
+    @ProtoNumber(19) val originalArtist: String? = null,
+    @ProtoNumber(20) val originalCoverUrl: String? = null,
+    @ProtoNumber(21) val originalLyric: String? = null,
+    @ProtoNumber(22) val originalTranslatedLyric: String? = null
 ) {
     companion object {
+        fun fromSongItemOrNull(song: SongItem, context: Context? = null): SyncSong? {
+            if (LocalSongSupport.isLocalSong(song, context)) {
+                return null
+            }
+            return fromSongItem(song, context)
+        }
+
         fun fromSongItem(song: SongItem, context: Context? = null): SyncSong {
             // 使用网络地址进行同步
             val mapper = context?.let { CoverUrlMapper.getInstance(it) }
@@ -124,6 +140,7 @@ data class SyncSong(
                 albumId = song.albumId,
                 durationMs = song.durationMs,
                 coverUrl = syncCoverUrl,
+                mediaUri = LocalSongSupport.sanitizeMediaUriForSync(song.mediaUri),
                 matchedLyric = song.matchedLyric,
                 matchedTranslatedLyric = song.matchedTranslatedLyric,
                 matchedLyricSource = song.matchedLyricSource?.name,
@@ -150,6 +167,7 @@ data class SyncSong(
             albumId = albumId,
             durationMs = durationMs,
             coverUrl = coverUrl,
+            mediaUri = LocalSongSupport.sanitizeMediaUriForSync(mediaUri),
             matchedLyric = matchedLyric,
             matchedTranslatedLyric = matchedTranslatedLyric,
             matchedLyricSource = matchedLyricSource?.let {
@@ -174,10 +192,10 @@ data class SyncSong(
  */
 @Serializable
 data class SyncRecentPlay(
-    val songId: Long,
-    val song: SyncSong,
-    val playedAt: Long,
-    val deviceId: String
+    @ProtoNumber(1) val songId: Long,
+    @ProtoNumber(2) val song: SyncSong,
+    @ProtoNumber(3) val playedAt: Long,
+    @ProtoNumber(4) val deviceId: String
 )
 
 /**
@@ -185,24 +203,50 @@ data class SyncRecentPlay(
  */
 @Serializable
 data class SyncFavoritePlaylist(
-    val id: Long,
-    val name: String,
-    val coverUrl: String?,
-    val trackCount: Int,
-    val source: String,
-    val songs: List<SyncSong>,
-    val addedTime: Long
+    @ProtoNumber(1) val id: Long,
+    @ProtoNumber(2) val name: String,
+    @ProtoNumber(3) val coverUrl: String?,
+    @ProtoNumber(4) val trackCount: Int,
+    @ProtoNumber(5) val source: String,
+    @ProtoNumber(6) val songs: List<SyncSong>,
+    @ProtoNumber(7) val addedTime: Long,
+    @ProtoNumber(8) val modifiedAt: Long = addedTime,
+    @ProtoNumber(9) val isDeleted: Boolean = false
 ) {
     companion object {
         fun fromFavoritePlaylist(playlist: FavoritePlaylist, context: Context? = null): SyncFavoritePlaylist {
+            if (playlist.isDeleted) {
+                return SyncFavoritePlaylist(
+                    id = playlist.id,
+                    name = playlist.name,
+                    coverUrl = playlist.coverUrl,
+                    trackCount = 0,
+                    source = playlist.source,
+                    songs = emptyList(),
+                    addedTime = playlist.addedTime,
+                    modifiedAt = playlist.modifiedAt,
+                    isDeleted = true
+                )
+            }
+            val syncedSongs = playlist.songs.mapNotNull { SyncSong.fromSongItemOrNull(it, context) }
+            val hasFilteredLocalSongs = syncedSongs.size != playlist.songs.size
+            val syncedCoverUrl = playlist.coverUrl
+                ?.takeUnless { LocalSongSupport.isLocalMediaUri(it) }
+                ?: syncedSongs.firstOrNull()?.coverUrl
             return SyncFavoritePlaylist(
                 id = playlist.id,
                 name = playlist.name,
-                coverUrl = playlist.coverUrl,
-                trackCount = playlist.trackCount,
+                coverUrl = syncedCoverUrl,
+                trackCount = if (hasFilteredLocalSongs) {
+                    syncedSongs.size
+                } else {
+                    maxOf(playlist.trackCount, syncedSongs.size)
+                },
                 source = playlist.source,
-                songs = playlist.songs.map { SyncSong.fromSongItem(it, context) },
-                addedTime = playlist.addedTime
+                songs = syncedSongs,
+                addedTime = playlist.addedTime,
+                modifiedAt = playlist.modifiedAt,
+                isDeleted = false
             )
         }
     }
@@ -215,7 +259,9 @@ data class SyncFavoritePlaylist(
             trackCount = trackCount,
             source = source,
             songs = songs.map { it.toSongItem() },
-            addedTime = addedTime
+            addedTime = addedTime,
+            modifiedAt = modifiedAt,
+            isDeleted = isDeleted
         )
     }
 }
@@ -226,12 +272,12 @@ data class SyncFavoritePlaylist(
  */
 @Serializable
 data class SyncLogEntry(
-    val timestamp: Long,
-    val deviceId: String,
-    val action: SyncAction,
-    val playlistId: Long? = null,
-    val songId: Long? = null,
-    val details: String? = null
+    @ProtoNumber(1) val timestamp: Long,
+    @ProtoNumber(2) val deviceId: String,
+    @ProtoNumber(3) val action: SyncAction,
+    @ProtoNumber(4) val playlistId: Long? = null,
+    @ProtoNumber(5) val songId: Long? = null,
+    @ProtoNumber(6) val details: String? = null
 )
 
 /**

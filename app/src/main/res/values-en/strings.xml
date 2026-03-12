@@ -14,6 +14,7 @@
     <string name="action_refresh">Refresh</string>
     <string name="action_search">Search</string>
     <string name="action_create">Create</string>
+    <string name="action_rename">Rename</string>
     <string name="action_reset">Reset</string>
     <string name="action_retry">Tap to Retry</string>
     <string name="action_back">Back</string>
@@ -25,6 +26,7 @@
     <string name="action_paste">Paste</string>
     <string name="action_select_all">Select All</string>
     <string name="action_deselect_all">Deselect All</string>
+    <string name="action_inverse_select">Invert Selection</string>
     <string name="action_multi_select">Multi-select</string>
     <string name="action_exit_multi_select">Exit Multi-select</string>
 
@@ -116,7 +118,7 @@
     <string name="download_tasks_count">%d tasks</string>
     <string name="download_clear_completed">Clear Completed</string>
     <string name="download_clear_confirm_title">Clear Download Tasks</string>
-    <string name="download_clear_confirm_message">Are you sure you want to clear all completed and cancelled download tasks?</string>
+    <string name="download_clear_confirm_message">Are you sure you want to clear all completed and canceled download tasks?</string>
     <string name="download_confirm">Confirm</string>
     <string name="download_cancel_action">Cancel</string>
     <string name="download_resume">Resume Download</string>
@@ -145,8 +147,12 @@
     <string name="settings_theme_color_desc">Choose your favorite color</string>
     <string name="settings_dynamic_color">Dynamic Color</string>
     <string name="settings_dynamic_color_desc">Follow cover theme color</string>
+    <string name="settings_theme_toggle_dark">Switch to dark theme</string>
+    <string name="settings_theme_toggle_light">Switch to light theme</string>
     <string name="settings_force_dark">Force Dark Mode</string>
     <string name="settings_force_dark_desc">Manually specify when not following system</string>
+    <string name="settings_cover_source_badge">Show song source on cover</string>
+    <string name="settings_cover_source_badge_desc">Display the platform badge for the current song on the cover area</string>
     <string name="settings_haptic">Haptic Feedback</string>
     <string name="settings_haptic_desc">Vibrate on button press</string>
     <string name="settings_personalization">Personalization</string>
@@ -161,8 +167,8 @@
     <string name="settings_now_playing_dynamic_background">Now Playing Dynamic Background</string>
     <string name="settings_now_playing_dynamic_background_desc">Enable fluid background effect (higher power)</string>
     <string name="settings_network">Network</string>
-    <string name="settings_bypass_proxy">Bypass System Proxy</string>
-    <string name="settings_bypass_proxy_desc">Don\'t use system proxy for app requests</string>
+    <string name="settings_bypass_proxy">Bypass Proxy</string>
+    <string name="settings_bypass_proxy_desc">Ignore system proxy</string>
     <string name="settings_storage">Storage &amp; Cache</string>
     <string name="settings_cache_limit">Cache Limit</string>
     <string name="settings_clear_cache">Clear</string>
@@ -211,7 +217,7 @@
     <string name="lyrics_title">Lyrics</string>
     <string name="lyrics_no_lyrics">No Lyrics</string>
     <string name="lyrics_blur">Blur</string>
-    <string name="lyrics_blur_effect">Blur Effect</string>
+    <string name="lyrics_blur_effect">Lyrics Blur</string>
     <string name="lyrics_blur_desc">Blur inactive lines</string>
     <string name="lyrics_blur_amount">Blur Intensity</string>
     <string name="lyrics_blur_current">Current Blur: %.2f</string>
@@ -273,7 +279,10 @@
     <string name="sync_create_new_repo">Create New</string>
     <string name="sync_use_existing_repo">Use Existing</string>
     <string name="sync_data_saver">Data Saver</string>
-    <string name="sync_data_saver_desc">Highly recommended if no special requirements\nSwitching modes may cause data loss. Ensure all platform settings are consistent. Do not switch casually</string>
+    <string name="sync_data_saver_desc">Reduce sync traffic. Keep the same setting on all devices.</string>
+    <string name="sync_data_saver_warning_title">Change Data Saver?</string>
+    <string name="sync_data_saver_warning_message">Changing this may affect sync consistency. Make sure all devices use the same setting.</string>
+    <string name="sync_data_saver_warning_confirm">Continue</string>
     <string name="sync_diff_failed">Diff Analysis Failed</string>
     <string name="sync_analysis_progress">Analysis Progress</string>
 
@@ -328,7 +337,7 @@
     <string name="music_search_cover">Search Cover</string>
     <string name="music_auto_fill">Auto Fill</string>
     <string name="music_auto_fill_hint">Auto fill info from search results</string>
-    <string name="music_save_changes">Save Changes</string>
+    <string name="music_save_changes">Save</string>
     <string name="music_info_saved">Song info saved</string>
     <string name="music_select_result">Select search result</string>
     <string name="music_manual_edit">Manual Edit</string>
@@ -623,7 +632,15 @@
     <string name="toast_cache_cleared">Cleared %d MB cache</string>
     <string name="toast_cache_clear_error">Clear error: %s</string>
     <string name="toast_playback_stopped">Multiple songs failed, playback stopped</string>
+    <string name="playback_invalid_url">Playback URL is invalid. Please sign in again or switch audio quality and retry.</string>
+    <string name="playback_network_error">Network connection failed. Check your connection and try again.</string>
+    <string name="playback_failed_with_code">Playback failed: %1$s</string>
+    <string name="playback_login_required">Sign-in is required before this track can be played.</string>
+    <string name="playback_video_info_unavailable">Video audio information is currently unavailable.</string>
+    <string name="playback_restore_failed">Failed to restore playback state: %1$s</string>
+    <string name="playback_url_error_detail">Failed to resolve playback URL: %1$s</string>
     <string name="toast_match_failed">Match failed: %s</string>
+    <string name="toast_save_failed">Save failed: %s</string>
     <string name="snackbar_cookie_empty">No Cookie found, please confirm login</string>
     <string name="snackbar_read_failed">Read failed: %s</string>
 
@@ -638,7 +655,7 @@
     <string name="error_netease_search">Netease search failed: %s</string>
     <string name="error_load_playlist">Load playlist failed: %s</string>
     <string name="error_search_failed">Search failed: %s</string>
-    <string name="error_get_user_id">Cannot get user ID, please login again</string>
+    <string name="error_get_user_id">Cannot get user ID, please log in again</string>
     <string name="error_api_code">API returned error code=%d</string>
     <string name="error_missing_node">Missing %s node</string>
 
@@ -653,6 +670,7 @@
     <string name="github_repo_not_found">Repository not found or no access: %s</string>
     <string name="github_token_expired">GitHub Token expired, please reconfigure</string>
     <string name="github_token_expired_message">GitHub Token expired or invalid, please reconfigure</string>
+    <string name="github_backup_file_invalid">Remote backup file is invalid or corrupted</string>
     <string name="github_sync_failed">Sync failed: %s</string>
 
     <!-- LyricsScreen -->
@@ -732,8 +750,8 @@
     <string name="log_delete_confirm">This will delete all local log files and cannot be undone.</string>
 
     <!-- Home Search Keywords -->
-    <string name="home_search_hot">热歌</string>
-    <string name="home_search_radar">私人雷达</string>
+    <string name="home_search_hot">Hot Songs</string>
+    <string name="home_search_radar">Personal Radar</string>
 
     <!-- Backup Manager -->
     <string name="backup_no_playlists">No playlist data in backup file</string>
@@ -797,6 +815,8 @@
     <string name="settings_storage_expand">Manage cache</string>
     <string name="settings_no_cache">No cache</string>
     <string name="settings_cache_notice">Set to 0 MB to disable cache. Restart required after changing limit.</string>
+    <string name="settings_cache_size_gb">%.1f GB</string>
+    <string name="settings_cache_size_mb">%1$d MB</string>
     <string name="settings_download_management">Download Management</string>
     <string name="settings_download_expand">Manage downloads</string>
     <string name="settings_download_progress">Download Progress</string>
@@ -895,7 +915,11 @@
 
     <!-- Language Settings -->
     <string name="language_simplified_chinese">Simplified Chinese</string>
+    <string name="language_english">English</string>
     <string name="language_follow_system">Follow System</string>
+    <string name="language_display_chinese">Chinese / 简体中文</string>
+    <string name="language_display_english">English / 英语</string>
+    <string name="language_display_system">Follow system / 跟随系统</string>
 
     <!-- Time Format -->
     <string name="time_zero_minutes">0 minutes</string>
@@ -934,9 +958,9 @@
     <string name="download_local_file">Local File</string>
 
     <!-- Notification Messages -->
+    <string name="notification_timer_remaining">⏱ Stops in %1$s</string>
     <string name="notification_stop_after_current">⏱ Stop After Current</string>
     <string name="notification_stop_after_playlist">⏱ Stop After Playlist</string>
-
     <!-- Settings Messages -->
     <string name="settings_sync_batch_update_time">Update every 10 minutes</string>
     <string name="settings_color_picker_hint">Long press color or tap × to delete custom color</string>
@@ -985,6 +1009,16 @@
     <string name="local_playlist_play_next">Play Next...</string>
     <string name="download_manager_title">Download Manager</string>
     <string name="download_manager_subtitle">Manage downloads</string>
+    <string name="download_scan_local">Scan Local Music</string>
+    <string name="local_playlist_scan_preserve_existing">Invalid scan result. Kept the existing Local Files list.</string>
+    <string name="local_playlist_scan_preview_title">Preview Local Files</string>
+    <string name="local_playlist_scan_preview_search">Search local files</string>
+    <string name="local_playlist_scan_preview_apply">Import Selected Songs</string>
+    <string name="download_scanning">Scanning local audio…</string>
+    <string name="download_scan_failed">Scan failed: %1$d items</string>
+    <string name="download_scan_empty">No local audio files found</string>
+    <string name="download_scan_add_selected">Add selected (%1$d)</string>
+    <string name="download_scan_permission_required">Grant audio read permission before scanning local music</string>
     <string name="download_selected_count">%d selected</string>
     <string name="download_delete_selected">Delete Selected</string>
     <string name="download_exit_selection">Exit Selection</string>
@@ -997,6 +1031,8 @@
     <string name="download_delete">Delete</string>
     <string name="home_loading">Loading recommendations for you...</string>
     <string name="home_load_failed">Load failed: %s</string>
+    <string name="home_error_network">Network or server error: %s</string>
+    <string name="home_error_unknown">Parse or unknown error: %s</string>
     <string name="home_retry_hint">Tap refresh in the upper right to retry~</string>
     <string name="home_song_count_format">%d songs</string>
     <string name="home_play_count_format" formatted="false">%s · %d songs</string>
@@ -1004,12 +1040,15 @@
     <string name="home_favorite_playlist">Favorite Playlist</string>
     <string name="home_unfavorited">Unfavorited</string>
     <string name="continue_playing_remove">Remove</string>
+    <string name="home_title_brand_loud">NeriPlayer!</string>
+    <string name="home_title_brand_wave">NeriPlayer~</string>
+    <string name="home_title_brand_call">Hey, NeriPlayer</string>
     <string name="library_create_playlist_default">New Playlist</string>
     <string name="library_video_count">%d videos</string>
     <string name="library_name_reserved">This name is reserved for \"%s\", please choose another name~</string>
     <string name="library_name_exists">A playlist with this name already exists, please choose another name</string>
     <string name="library_create_new">+ Create Playlist</string>
-    <string name="library_song_count_format" formatted="false">%d song</string>
+    <string name="library_song_count_format">%d song</string>
     <plurals name="library_song_count">
         <item quantity="one">%d song</item>
         <item quantity="other">%d songs</item>
@@ -1022,6 +1061,8 @@
     <string name="library_favorite_source_format" formatted="false">%d songs · %s</string>
     <string name="library_title">Library</string>
     <string name="library_coming_soon">Coming Soon</string>
+    <string name="library_recent_played">Recent Plays</string>
+    <string name="library_delete_playlist_confirm">Delete playlist \"%1$s\"?</string>
     <string name="bili_loading_favorites">Loading favorites...</string>
     <string name="bili_load_failed">Load failed: %s</string>
     <string name="bili_get_parts_failed">Failed to get parts</string>
@@ -1037,6 +1078,10 @@
     <string name="local_playlist_delete_songs_confirm">Are you sure you want to remove %d selected songs from the playlist?</string>
     <string name="local_playlist_delete_count">Delete (%d)</string>
     <string name="local_playlist_export_to">Export to Playlist</string>
+    <string name="local_playlist_import_audio">Import Local Audio</string>
+    <string name="local_playlist_import_audio_success">Imported %d local tracks</string>
+    <string name="local_playlist_import_audio_partial">Imported %1$d tracks, failed %2$d</string>
+    <string name="local_playlist_import_audio_failed">Import failed, %d tracks failed</string>
     <string name="local_playlist_total_duration" formatted="false">%s · %d songs</string>
 
     <!-- Disclaimer Content -->
@@ -1075,6 +1120,8 @@
     <string name="github_sync_failed_title">GitHub Sync Failed</string>
     <string name="github_sync_token_expired">Token expired, please reconfigure</string>
     <string name="github_sync_failed_message">Sync failed</string>
+    <string name="github_sync_silent_failure">Silence Sync Failures</string>
+    <string name="github_sync_silent_failure_desc">Silence regular background sync failure notifications. Token expiry will still notify.</string>
     <string name="nowplaying_favorited">Favorited</string>
     <string name="nowplaying_favorite">Favorite</string>
     <string name="nowplaying_more_options">More Options</string>
@@ -1094,11 +1141,18 @@
     <string name="language_restart_message">Language changed. App restart required for full effect.</string>
     <string name="language_restart_now">Restart Now</string>
     <string name="language_restart_later">Later</string>
+    <string name="language_restart_title_bilingual">Restart app / 重启应用</string>
+    <string name="language_restart_message_bilingual">Language changed. Restart the app to apply it completely.\n语言已更改，需要重启应用以完全生效。</string>
+    <string name="language_restart_now_bilingual">Restart now / 立即重启</string>
+    <string name="language_restart_later_bilingual">Later / 稍后</string>
 
     <!-- Lyrics Editor -->
     <string name="lyrics_original">Original</string>
     <string name="lyrics_translation">Translation</string>
     <string name="music_restore_original">Restore</string>
+    <string name="music_restore_cover">Restore cover</string>
+    <string name="music_restore_title">Restore title</string>
+    <string name="music_restore_artist">Restore artist</string>
     <string name="music_lyrics_filled_success">Lyrics filled successfully</string>
     <string name="music_lyrics_empty">No lyrics available for this song</string>
     <string name="music_lyrics_fill_failed">Failed to fill lyrics</string>
@@ -1106,5 +1160,17 @@
     <string name="music_restore_failed">Failed to retrieve original info</string>
     <string name="lyrics_editor_hint_original">[00:00.00]Enter lyrics here\n[00:05.00]Supports LRC format\n[00:10.00]Format: [mm:ss.xx]Lyrics content</string>
     <string name="lyrics_editor_hint_translation">[00:00.00]Enter translated lyrics here\n[00:05.00]Supports LRC format\n[00:10.00]Format: [mm:ss.xx]Translation content</string>
-
+    <string name="common_selected">Selected</string>
+    <string name="common_youtube">YouTube</string>
+    <string name="common_github">GitHub</string>
+    <string name="settings_build_uuid">Build UUID</string>
+    <string name="settings_version_debug_suffix">DEBUG MODE</string>
+    <string name="settings_github_repo_url">github.com/cwuom/NeriPlayer</string>
+    <string name="settings_github_token_label">GitHub Token</string>
+    <string name="settings_github_token_placeholder">ghp_xxxxxxxxxxxx</string>
+    <string name="settings_sync_repo_placeholder">username/repo-name</string>
+    <string name="cd_app_background">App background</string>
+    <string name="common_label_value_format">%1$s - %2$s</string>
+    <string name="common_percent_int">%1$d%%</string>
+    <string name="download_progress_file_label">%1$d%% - %2$s</string>
 </resources>

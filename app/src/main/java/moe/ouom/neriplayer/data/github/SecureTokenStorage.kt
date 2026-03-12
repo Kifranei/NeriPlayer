@@ -25,8 +25,10 @@ package moe.ouom.neriplayer.data.github
 
 import android.content.Context
 import android.content.SharedPreferences
+import androidx.core.content.edit
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import java.util.UUID
 
 /**
  * GitHub Token安全存储
@@ -58,6 +60,7 @@ class SecureTokenStorage(context: Context) {
         private const val KEY_DELETED_PLAYLIST_IDS = "deleted_playlist_ids"
         private const val KEY_TOKEN_WARNING_DISMISSED = "token_warning_dismissed"
         private const val KEY_DATA_SAVER_MODE = "data_saver_mode"
+        private const val KEY_SYNC_MUTATION_VERSION = "sync_mutation_version"
     }
 
     /** 播放历史更新模式 */
@@ -68,7 +71,7 @@ class SecureTokenStorage(context: Context) {
 
     /** 保存GitHub Token */
     fun saveToken(token: String) {
-        encryptedPrefs.edit().putString(KEY_GITHUB_TOKEN, token).apply()
+        encryptedPrefs.edit { putString(KEY_GITHUB_TOKEN, token) }
     }
 
     /** 获取GitHub Token */
@@ -78,15 +81,15 @@ class SecureTokenStorage(context: Context) {
 
     /** 删除Token */
     fun clearToken() {
-        encryptedPrefs.edit().remove(KEY_GITHUB_TOKEN).apply()
+        encryptedPrefs.edit { remove(KEY_GITHUB_TOKEN) }
     }
 
     /** 保存仓库信息 */
     fun saveRepository(owner: String, name: String) {
-        encryptedPrefs.edit()
-            .putString(KEY_REPO_OWNER, owner)
-            .putString(KEY_REPO_NAME, name)
-            .apply()
+        encryptedPrefs.edit {
+            putString(KEY_REPO_OWNER, owner)
+                .putString(KEY_REPO_NAME, name)
+        }
     }
 
     /** 获取仓库Owner */
@@ -101,7 +104,7 @@ class SecureTokenStorage(context: Context) {
 
     /** 保存设备ID */
     fun saveDeviceId(deviceId: String) {
-        encryptedPrefs.edit().putString(KEY_DEVICE_ID, deviceId).apply()
+        encryptedPrefs.edit { putString(KEY_DEVICE_ID, deviceId) }
     }
 
     /** 获取设备ID */
@@ -109,9 +112,19 @@ class SecureTokenStorage(context: Context) {
         return encryptedPrefs.getString(KEY_DEVICE_ID, null)
     }
 
+    /**
+     * 升级用户保留已有 deviceId，新用户首次生成本地 UUID。
+     * 不再依赖系统 ANDROID_ID，避免设备标识权限/兼容性问题。
+     */
+    fun getOrCreateDeviceId(): String {
+        return getDeviceId()
+            ?.takeIf { it.isNotBlank() }
+            ?: UUID.randomUUID().toString().also(::saveDeviceId)
+    }
+
     /** 保存最后同步时间 */
     fun saveLastSyncTime(timestamp: Long) {
-        encryptedPrefs.edit().putLong(KEY_LAST_SYNC_TIME, timestamp).apply()
+        encryptedPrefs.edit { putLong(KEY_LAST_SYNC_TIME, timestamp) }
     }
 
     /** 获取最后同步时间 */
@@ -121,7 +134,7 @@ class SecureTokenStorage(context: Context) {
 
     /** 设置自动同步开关 */
     fun setAutoSyncEnabled(enabled: Boolean) {
-        encryptedPrefs.edit().putBoolean(KEY_AUTO_SYNC_ENABLED, enabled).apply()
+        encryptedPrefs.edit { putBoolean(KEY_AUTO_SYNC_ENABLED, enabled) }
     }
 
     /** 获取自动同步开关状态 */
@@ -188,6 +201,20 @@ class SecureTokenStorage(context: Context) {
         encryptedPrefs.edit().remove(KEY_DELETED_PLAYLIST_IDS).apply()
     }
 
+    fun removeDeletedPlaylistIds(playlistIds: Set<Long>) {
+        if (playlistIds.isEmpty()) {
+            return
+        }
+        val remaining = getDeletedPlaylistIds() - playlistIds
+        if (remaining.isEmpty()) {
+            clearDeletedPlaylistIds()
+            return
+        }
+        encryptedPrefs.edit()
+            .putString(KEY_DELETED_PLAYLIST_IDS, remaining.joinToString(","))
+            .apply()
+    }
+
     /** 设置Token警告已忽略 */
     fun setTokenWarningDismissed(dismissed: Boolean) {
         encryptedPrefs.edit().putBoolean(KEY_TOKEN_WARNING_DISMISSED, dismissed).apply()
@@ -206,5 +233,15 @@ class SecureTokenStorage(context: Context) {
     /** 获取省流模式状态 */
     fun isDataSaverMode(): Boolean {
         return encryptedPrefs.getBoolean(KEY_DATA_SAVER_MODE, true)
+    }
+
+    fun getSyncMutationVersion(): Long {
+        return encryptedPrefs.getLong(KEY_SYNC_MUTATION_VERSION, 0L)
+    }
+
+    fun markSyncMutation(): Long {
+        val nextVersion = getSyncMutationVersion() + 1L
+        encryptedPrefs.edit().putLong(KEY_SYNC_MUTATION_VERSION, nextVersion).apply()
+        return nextVersion
     }
 }

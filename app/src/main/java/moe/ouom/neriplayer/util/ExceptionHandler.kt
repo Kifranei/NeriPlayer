@@ -1,20 +1,27 @@
 ﻿package moe.ouom.neriplayer.util
 
+import android.app.Application
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import android.os.Process
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import moe.ouom.neriplayer.R
 import java.io.File
 import java.io.FileOutputStream
 import java.io.PrintWriter
 import java.io.StringWriter
+import java.lang.ref.WeakReference
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.system.exitProcess
 
 /*
  * NeriPlayer - A unified Android player for streaming music and videos from multiple online platforms.
@@ -45,35 +52,47 @@ import java.util.Locale
  */
 object ExceptionHandler {
 
-    private var context: Context? = null
-    private var errorDialogCallback: ((String, String) -> Unit)? = null
+    private var applicationRef: WeakReference<Application>? = null
+    private var previousHandler: Thread.UncaughtExceptionHandler? = null
+    @Volatile
+    private var initialized = false
     private val mainHandler = Handler(Looper.getMainLooper())
     private var crashLogFile: File? = null
     private val crashLogScope = CoroutineScope(Dispatchers.IO)
+    private val errorDialogEvents = MutableSharedFlow<ErrorDialogEvent>(extraBufferCapacity = 1)
+
+    data class ErrorDialogEvent(val title: String, val message: String)
+    val errorEvents: SharedFlow<ErrorDialogEvent> = errorDialogEvents.asSharedFlow()
     
     /**
      * 初始化异常处理器
      * @param appContext 应用上下文
-     * @param showErrorDialog 是否显示错误弹窗的回调函数
      */
-    fun init(appContext: Context, showErrorDialog: (String, String) -> Unit) {
-        context = appContext.applicationContext
-        errorDialogCallback = showErrorDialog
+    fun init(app: Application) {
+        if (initialized) return
+        applicationRef = WeakReference(app)
 
         // 设置崩溃日志文件
-        setupCrashLogFile(appContext)
+        setupCrashLogFile(app)
 
         // 设置全局未捕获异常处理器
+        previousHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
-            handleException(thread.name, throwable, isUncaught = true)
+            runCatching {
+                handleException(thread.name, throwable, isUncaught = true)
+            }.onFailure { loggingError ->
+                NPLogger.e("ExceptionHandler", "Failed while handling uncaught exception", loggingError)
+            }
+            delegateOrTerminate(thread, throwable)
         }
+        initialized = true
 
         NPLogger.i("ExceptionHandler", "Global exception handler initialized")
         crashLogFile?.let {
             NPLogger.i("ExceptionHandler", "Crash logs will be saved to: ${it.absolutePath}")
         }
     }
-    
+
     /**
      * 处理异常
      * @param source 异常来源（线程名或组件名）
@@ -109,10 +128,16 @@ object ExceptionHandler {
         NPLogger.e("ExceptionHandler", exceptionInfo)
 
         // 独立写入崩溃日志文件（不依赖NPLogger的开关）
-        writeCrashLogToFile(exceptionInfo)
+        if (isUncaught) {
+            writeCrashLogSync(exceptionInfo)
+        } else {
+            writeCrashLogToFile(exceptionInfo)
+        }
 
-        // 在主线程显示错误弹窗
-        showErrorDialogOnMainThread(source, throwable, exceptionInfo)
+        // 在主线程显示错误弹窗（仅处理可恢复异常）
+        if (!isUncaught) {
+            showErrorDialogOnMainThread(source, throwable)
+        }
     }
     
     /**
@@ -170,16 +195,16 @@ object ExceptionHandler {
     /**
      * 在主线程显示错误弹窗
      */
-    private fun showErrorDialogOnMainThread(source: String, throwable: Throwable, exceptionInfo: String) {
+    private fun showErrorDialogOnMainThread(source: String, throwable: Throwable) {
         mainHandler.post {
-            val ctx = context ?: run {
-                NPLogger.e("ExceptionHandler", "Context is null, cannot show error dialog")
+            val app = applicationRef?.get() ?: run {
+                NPLogger.e("ExceptionHandler", "Application reference is null, cannot show error dialog")
                 return@post
             }
 
             try {
                 // Apply language settings to get localized strings
-                val localizedContext = LanguageManager.applyLanguage(ctx)
+                val localizedContext = LanguageManager.applyLanguage(app)
                 val title = localizedContext.getString(R.string.exception_title)
                 val message = buildString {
                     appendLine(localizedContext.getString(R.string.exception_occurred))
@@ -191,32 +216,55 @@ object ExceptionHandler {
                     appendLine(localizedContext.getString(R.string.exception_contact))
                 }
 
-                NPLogger.d("ExceptionHandler", "Invoking error dialog callback")
-                errorDialogCallback?.invoke(title, message) ?: run {
-                    NPLogger.e("ExceptionHandler", "Error dialog callback is null")
-                }
+                NPLogger.d("ExceptionHandler", "Emitting error dialog event")
+                errorDialogEvents.tryEmit(ErrorDialogEvent(title, message))
             } catch (e: Exception) {
                 // Fallback: use original context if language manager fails
                 NPLogger.e("ExceptionHandler", "Failed to apply language settings, using fallback", e)
                 try {
-                    val title = ctx.getString(R.string.exception_title)
+                    val title = app.getString(R.string.exception_title)
                     val message = buildString {
-                        appendLine(ctx.getString(R.string.exception_occurred))
-                        appendLine(ctx.getString(R.string.exception_source, source))
-                        appendLine(ctx.getString(R.string.exception_type, throwable.javaClass.simpleName))
-                        appendLine(ctx.getString(R.string.exception_message, throwable.message ?: ctx.getString(R.string.exception_no_detail)))
+                        appendLine(app.getString(R.string.exception_occurred))
+                        appendLine(app.getString(R.string.exception_source, source))
+                        appendLine(app.getString(R.string.exception_type, throwable.javaClass.simpleName))
+                        appendLine(app.getString(R.string.exception_message, throwable.message ?: app.getString(R.string.exception_no_detail)))
                         appendLine()
-                        appendLine(ctx.getString(R.string.exception_logged))
-                        appendLine(ctx.getString(R.string.exception_contact))
+                        appendLine(app.getString(R.string.exception_logged))
+                        appendLine(app.getString(R.string.exception_contact))
                     }
 
-                    NPLogger.d("ExceptionHandler", "Invoking error dialog callback (fallback)")
-                    errorDialogCallback?.invoke(title, message)
+                    NPLogger.d("ExceptionHandler", "Emitting error dialog event (fallback)")
+                    errorDialogEvents.tryEmit(ErrorDialogEvent(title, message))
                 } catch (fallbackError: Exception) {
                     NPLogger.e("ExceptionHandler", "Fallback also failed", fallbackError)
                 }
             }
         }
+    }
+
+    /**
+     * 尽量保持系统原始崩溃链路；若系统未提供默认处理器，则显式终止进程，
+     * 避免异常被吞掉后应用继续运行在损坏状态。
+     */
+    private fun delegateOrTerminate(thread: Thread, throwable: Throwable) {
+        val handler = previousHandler
+        if (handler != null) {
+            runCatching {
+                handler.uncaughtException(thread, throwable)
+            }.onFailure { delegateError ->
+                NPLogger.e("ExceptionHandler", "Previous uncaught exception handler failed", delegateError)
+                terminateProcess()
+            }
+            return
+        }
+
+        throwable.printStackTrace()
+        terminateProcess()
+    }
+
+    private fun terminateProcess() {
+        Process.killProcess(Process.myPid())
+        exitProcess(10)
     }
 
     /**
@@ -256,11 +304,27 @@ object ExceptionHandler {
     }
 
     /**
+     * 同步写入崩溃日志（用于未捕获异常，确保落盘）
+     */
+    private fun writeCrashLogSync(exceptionInfo: String) {
+        if (crashLogFile == null) {
+            applicationRef?.get()?.let(::setupCrashLogFile)
+        }
+        val logFile = crashLogFile ?: return
+        try {
+            FileOutputStream(logFile, true).use { fos ->
+                fos.write(exceptionInfo.toByteArray())
+                fos.write("\n\n".toByteArray())
+            }
+        } catch (e: Exception) {
+            NPLogger.e("ExceptionHandler", "Failed to write crash log to file (sync)", e)
+        }
+    }
+
+    /**
      * 清理资源
      */
     fun cleanup() {
-        context = null
-        errorDialogCallback = null
         NPLogger.i("ExceptionHandler", "Exception handler cleaned up")
     }
 }

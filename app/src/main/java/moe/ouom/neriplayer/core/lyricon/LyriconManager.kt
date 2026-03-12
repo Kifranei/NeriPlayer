@@ -19,15 +19,15 @@ object LyriconManager {
     fun initialize(context: Context) {
         if (provider != null) return
         try {
-            provider = LyriconFactory.createProvider(context)
-            provider?.register()
-            
-            provider?.service?.addConnectionListener {
+            val createdProvider = LyriconFactory.createProvider(context.applicationContext)
+            createdProvider.service.addConnectionListener {
                 onConnected { NPLogger.d("LyriconManager", "Connected") }
                 onReconnected { NPLogger.d("LyriconManager", "Reconnected") }
                 onDisconnected { NPLogger.d("LyriconManager", "Disconnected") }
                 onConnectTimeout { NPLogger.d("LyriconManager", "ConnectTimeout") }
             }
+            createdProvider.register()
+            provider = createdProvider
         } catch (e: Exception) {
             NPLogger.e("LyriconManager", "Failed to initialize LyriconProvider", e)
         }
@@ -43,6 +43,7 @@ object LyriconManager {
             } catch (_: Exception) {
             } finally {
                 provider = null
+                lastHasTranslation = false
             }
         }
     }

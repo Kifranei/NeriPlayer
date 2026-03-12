@@ -3,6 +3,7 @@
 import android.app.Application
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -51,6 +52,7 @@ fun DownloadManagerScreen(
             }
         }
     )
+    val miniPlayerHeight = LocalMiniPlayerHeight.current
 
     LaunchedEffect(Unit) {
         viewModel.refreshDownloadedSongs()
@@ -69,6 +71,7 @@ fun DownloadManagerScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Transparent)
+            .padding(bottom = miniPlayerHeight)
     ) {
         // 顶部栏
         TopAppBar(

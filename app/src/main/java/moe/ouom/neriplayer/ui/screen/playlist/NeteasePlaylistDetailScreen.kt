@@ -26,10 +26,13 @@ package moe.ouom.neriplayer.ui.screen.playlist
 import android.app.Application
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.FiniteAnimationSpec
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -53,8 +56,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -91,6 +94,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -120,6 +124,9 @@ import moe.ouom.neriplayer.core.di.AppContainer
 import moe.ouom.neriplayer.core.player.PlayerManager
 import moe.ouom.neriplayer.data.LocalPlaylistRepository
 import moe.ouom.neriplayer.data.FavoritePlaylistRepository
+import moe.ouom.neriplayer.data.LocalFilesPlaylist
+import moe.ouom.neriplayer.data.displayArtist
+import moe.ouom.neriplayer.data.displayName
 import moe.ouom.neriplayer.ui.viewmodel.tab.NeteaseAlbum
 import moe.ouom.neriplayer.ui.viewmodel.tab.NeteasePlaylist
 import moe.ouom.neriplayer.ui.viewmodel.playlist.PlaylistDetailViewModel
@@ -146,6 +153,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
+import moe.ouom.neriplayer.data.sameIdentityAs
 import moe.ouom.neriplayer.core.download.GlobalDownloadManager
 import moe.ouom.neriplayer.util.HapticFloatingActionButton
 import moe.ouom.neriplayer.util.HapticIconButton
@@ -170,7 +178,7 @@ fun NeteasePlaylistDetailScreen(
     )
 
     val ui by vm.uiState.collectAsState()
-    // 使用Unit作为key，确保每次进入都重新加载最新数据
+    // 使用Unit作为key，确保每次进入都重新加载最新数�?
     LaunchedEffect(Unit) { vm.startPlaylist(playlist) }
 
     // 保存最新的header数据，用于在Screen销毁时更新使用记录
@@ -179,7 +187,7 @@ fun NeteasePlaylistDetailScreen(
         ui.header?.let { latestHeader = it }
     }
 
-    // 在Screen销毁时更新使用记录，确保返回主页时卡片显示最新信息
+    // 在Screen销毁时更新使用记录，确保返回主页时卡片显示最新信�?
     DisposableEffect(Unit) {
         onDispose {
             latestHeader?.let { header ->
@@ -222,7 +230,7 @@ fun NeteaseAlbumDetailScreen(
     )
 
     val ui by vm.uiState.collectAsState()
-    // 使用Unit作为key，确保每次进入都重新加载最新数据
+    // 使用Unit作为key，确保每次进入都重新加载最新数�?
     LaunchedEffect(Unit) { vm.startAlbum(album) }
 
     // 保存最新的header数据，用于在Screen销毁时更新使用记录
@@ -231,7 +239,7 @@ fun NeteaseAlbumDetailScreen(
         ui.header?.let { latestHeader = it }
     }
 
-    // 在Screen销毁时更新使用记录，确保返回主页时卡片显示最新信息
+    // 在Screen销毁时更新使用记录，确保返回主页时卡片显示最新信�?
     DisposableEffect(Unit) {
         onDispose {
             latestHeader?.let { header ->
@@ -274,12 +282,14 @@ fun DetailScreen(
     val batchDownloadProgress by AudioDownloadManager.batchProgressFlow.collectAsState()
 
     val currentSong by PlayerManager.currentSongFlow.collectAsState()
-    val listState = rememberLazyListState()
+    val listState = rememberSaveable(playlistId, saver = LazyListState.Saver) {
+        LazyListState(firstVisibleItemIndex = 0, firstVisibleItemScrollOffset = 0)
+    }
     val scope = rememberCoroutineScope()
     var showSearch by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
 
-    // 多选 & 导出到本地歌单
+    // 多�?& 导出到本地歌�?
     val repo = remember(context) { LocalPlaylistRepository.getInstance(context) }
     val allPlaylists by repo.playlists.collectAsState()
     var selectionMode by remember { mutableStateOf(false) }
@@ -315,8 +325,9 @@ fun DetailScreen(
                 modifier = Modifier.fillMaxSize(),
                 color = Color.Transparent
             ) {
+                val miniPlayerHeight = LocalMiniPlayerHeight.current
                 Column {
-                    // 顶部栏：普通模式 / 多选模式
+                    // 顶部栏：普通模�?/ 多选模�?
                     if (!selectionMode) {
                         TopAppBar(
                             title = {
@@ -398,7 +409,11 @@ fun DetailScreen(
                                 HapticIconButton(onClick = { if (allSelected) clearSelection() else selectAll() }) {
                                     Icon(
                                         imageVector = if (allSelected) Icons.Filled.CheckBox else Icons.Filled.CheckBoxOutlineBlank,
-                                        contentDescription = if (allSelected) "取消全选" else "全选"
+                                        contentDescription = if (allSelected) {
+                                            stringResource(R.string.action_deselect_all)
+                                        } else {
+                                            stringResource(R.string.action_select_all)
+                                        }
                                     )
                                 }
                                 HapticIconButton(
@@ -462,7 +477,6 @@ fun DetailScreen(
                         }
                     }
                     val currentIndex = displayedTracks.indexOfFirst { it.id == currentSong?.id }
-                    val miniPlayerHeight = LocalMiniPlayerHeight.current
 
                     Box(
                         modifier = Modifier
@@ -492,7 +506,7 @@ fun DetailScreen(
                                             .networkCachePolicy(CachePolicy.ENABLED)
                                             .build(),
                                         contentDescription = ui.header?.name
-                                            ?: "Playlist Shuffling",
+                                            ?: stringResource(R.string.playlist_title),
                                         contentScale = ContentScale.Crop,
                                         modifier = Modifier
                                             .fillMaxSize()
@@ -622,7 +636,7 @@ fun DetailScreen(
                         if (currentIndex >= 0) {
                             HapticFloatingActionButton(
                                 onClick = {
-                                    scope.launch { listState.animateScrollToItem(currentIndex) }
+                                    scope.launch { listState.animateScrollToItem(currentIndex + 1) }
                                 },
                                 modifier = Modifier
                                     .align(Alignment.BottomEnd)
@@ -651,7 +665,9 @@ fun DetailScreen(
                             Spacer(Modifier.height(8.dp))
 
                             LazyColumn {
-                                itemsIndexed(allPlaylists) { _, pl ->
+                                itemsIndexed(
+                                    allPlaylists.filterNot { LocalFilesPlaylist.isSystemPlaylist(it, context) }
+                                ) { _, pl ->
                                     Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
@@ -721,7 +737,7 @@ fun DetailScreen(
                         }
                     }
                 }
-                // 允许返回键优先退出多选
+                // 允许返回键优先退出多�?
                 BackHandler(enabled = selectionMode) { exitSelection() }
 
                 // Snackbar
@@ -736,7 +752,7 @@ fun DetailScreen(
         }
     }
 
-    // 下载管理器
+    // 下载管理�?
     if (showDownloadManager) {
         ModalBottomSheet(
             onDismissRequest = { showDownloadManager = false }
@@ -752,7 +768,7 @@ fun DetailScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        "下载管理器",
+                        stringResource(R.string.download_manager),
                         style = MaterialTheme.typography.titleLarge
                     )
                     HapticIconButton(onClick = { showDownloadManager = false }) {
@@ -850,13 +866,13 @@ fun DetailScreen(
                         )
                         Spacer(modifier = Modifier.height(16.dp))
                         Text(
-                            "暂无下载任务",
+                            stringResource(R.string.download_no_tasks),
                             style = MaterialTheme.typography.bodyLarge,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            "选择歌曲后点击下载按钮开始下载",
+                            stringResource(R.string.download_select_hint),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = TextAlign.Center
@@ -870,7 +886,7 @@ fun DetailScreen(
     }
 }
 
-/* 小组件 */
+/* 小组�?*/
 @Composable
 private fun RetryChip(onClick: () -> Unit) {
     Card(
@@ -879,7 +895,7 @@ private fun RetryChip(onClick: () -> Unit) {
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
     ) {
         Text(
-            "点我重试",
+            stringResource(R.string.action_retry),
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
             color = MaterialTheme.colorScheme.onPrimaryContainer
         )
@@ -900,7 +916,8 @@ private fun SongRow(
     snackbarHostState: SnackbarHostState
 ) {
     val current by PlayerManager.currentSongFlow.collectAsState()
-    val isPlayingSong = current?.id == song.id
+    val isPlaying by PlayerManager.isPlayingFlow.collectAsState()
+    val isCurrentSong = current?.sameIdentityAs(song) == true
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
@@ -952,7 +969,7 @@ private fun SongRow(
             ) {
                 AsyncImage(
                     model = ImageRequest.Builder(LocalContext.current).data(song.coverUrl).build(),
-                    contentDescription = song.name,
+                    contentDescription = song.displayName(),
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.matchParentSize()
                 )
@@ -962,14 +979,14 @@ private fun SongRow(
 
         Column(Modifier.weight(1f)) {
             Text(
-                text = song.name,
+                text = song.displayName(),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 style = MaterialTheme.typography.titleMedium
             )
             Text(
                 text = listOfNotNull(
-                    song.artist.takeIf { it.isNotBlank() },
+                    song.displayArtist().takeIf { it.isNotBlank() },
                     (song.album.takeIf { it.isNotBlank() })?.replace("Netease", "") ?: ""
                 ).joinToString(" · "),
                 maxLines = 1,
@@ -979,8 +996,11 @@ private fun SongRow(
             )
         }
 
-        if (isPlayingSong) {
-            PlayingIndicator(color = MaterialTheme.colorScheme.primary)
+        if (isCurrentSong) {
+            PlayingIndicator(
+                color = MaterialTheme.colorScheme.primary,
+                animate = isPlaying
+            )
         } else {
             Text(
                 text = formatDuration(song.durationMs),
@@ -1024,7 +1044,7 @@ private fun SongRow(
                     DropdownMenuItem(
                         text = { Text(stringResource(R.string.action_copy_song_info)) },
                         onClick = {
-                            val songInfo = "${song.name}-${song.artist}"
+                            val songInfo = "${song.displayName()}-${song.displayArtist()}"
                             clipboardManager.setText(AnnotatedString(songInfo))
                             scope.launch {
                                 snackbarHostState.showSnackbar(context.getString(R.string.toast_copied))
@@ -1041,10 +1061,14 @@ private fun SongRow(
 @Composable
 fun PlayingIndicator(
     modifier: Modifier = Modifier,
-    color: Color = MaterialTheme.colorScheme.primary
+    color: Color = MaterialTheme.colorScheme.primary,
+    animate: Boolean = true
 ) {
     val transition = rememberInfiniteTransition(label = "playing")
-    val animValues = listOf(
+    val flatHeight = 0.35f
+    val transitionSpec: FiniteAnimationSpec<Float> =
+        if (animate) snap() else tween(durationMillis = 180, easing = FastOutSlowInEasing)
+    val animatedValues = listOf(
         transition.animateFloat(
             initialValue = 0.3f,
             targetValue = 1f,
@@ -1073,6 +1097,23 @@ fun PlayingIndicator(
             label = "bar3"
         )
     )
+    val barHeights = listOf(
+        animateFloatAsState(
+            targetValue = if (animate) animatedValues[0].value else flatHeight,
+            animationSpec = transitionSpec,
+            label = "bar1Hold"
+        ).value,
+        animateFloatAsState(
+            targetValue = if (animate) animatedValues[1].value else flatHeight,
+            animationSpec = transitionSpec,
+            label = "bar2Hold"
+        ).value,
+        animateFloatAsState(
+            targetValue = if (animate) animatedValues[2].value else flatHeight,
+            animationSpec = transitionSpec,
+            label = "bar3Hold"
+        ).value
+    )
 
     val barWidth = 3.dp
     val barMaxHeight = 12.dp
@@ -1082,11 +1123,11 @@ fun PlayingIndicator(
         verticalAlignment = Alignment.Bottom,
         horizontalArrangement = Arrangement.spacedBy(1.dp)
     ) {
-        animValues.forEach { anim ->
+        barHeights.forEach { barHeight ->
             Box(
                 Modifier
                     .width(barWidth)
-                    .height(barMaxHeight * anim.value)
+                    .height(barMaxHeight * barHeight)
                     .clip(RoundedCornerShape(50))
                     .background(color)
             )

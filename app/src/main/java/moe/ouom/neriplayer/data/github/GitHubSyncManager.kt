@@ -1,58 +1,32 @@
 package moe.ouom.neriplayer.data.github
 
-/*
- * NeriPlayer - A unified Android player for streaming music and videos from multiple online platforms.
- * Copyright (C) 2025-2025 NeriPlayer developers
- * https://github.com/cwuom/NeriPlayer
- *
- * This software is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
- * (at your option) any later version.
- *
- * This software is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
- * See the GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this software.
- * If not, see <https://www.gnu.org/licenses/>.
- *
- * File: moe.ouom.neriplayer.data.github/GitHubSyncManager
- * Created: 2025/1/7
- */
-
 import android.content.Context
 import android.os.Build
-import android.provider.Settings
-import com.google.gson.Gson
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
 import moe.ouom.neriplayer.R
 import moe.ouom.neriplayer.data.FavoritePlaylistRepository
+import moe.ouom.neriplayer.data.FavoritesPlaylist
+import moe.ouom.neriplayer.data.LocalFilesPlaylist
 import moe.ouom.neriplayer.data.LocalPlaylist
 import moe.ouom.neriplayer.data.LocalPlaylistRepository
+import moe.ouom.neriplayer.data.LocalSongSupport
 import moe.ouom.neriplayer.data.PlayedEntry
 import moe.ouom.neriplayer.data.PlayHistoryRepository
+import moe.ouom.neriplayer.data.SystemLocalPlaylists
+import moe.ouom.neriplayer.data.identity
 import moe.ouom.neriplayer.util.LanguageManager
 import moe.ouom.neriplayer.util.NPLogger
-import java.util.UUID
+import java.io.IOException
 
-/**
- * GitHub 同步管理器
- * 实现三路合并算法,自动解决冲突
- */
-class GitHubSyncManager(private val context: Context) {
-
-    private val storage = SecureTokenStorage(context)
-    private val gson = Gson()
-    private val playlistRepo = LocalPlaylistRepository.getInstance(context)
-    private val favoriteRepo = FavoritePlaylistRepository.getInstance(context)
-    private val playHistoryRepo = PlayHistoryRepository.getInstance(context)
-
-    // 同步锁，防止并发同步
-    private val syncLock = kotlinx.coroutines.sync.Mutex()
+class GitHubSyncManager private constructor(context: Context) {
+    private val appContext = context.applicationContext
+    private val storage = SecureTokenStorage(appContext)
+    private val playlistRepo = LocalPlaylistRepository.getInstance(appContext)
+    private val favoriteRepo = FavoritePlaylistRepository.getInstance(appContext)
+    private val playHistoryRepo = PlayHistoryRepository.getInstance(appContext)
+    private val syncLock = Mutex()
 
     companion object {
         private const val TAG = "GitHubSyncManager"
@@ -67,204 +41,195 @@ class GitHubSyncManager(private val context: Context) {
         }
     }
 
-    /**
-     * 获取或生成设备ID
-     */
-    private fun getDeviceId(): String {
-        var deviceId = storage.getDeviceId()
-        if (deviceId == null) {
-            deviceId = try {
-                Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
-                    ?: UUID.randomUUID().toString()
-            } catch (e: Exception) {
-                UUID.randomUUID().toString()
-            }
-            storage.saveDeviceId(deviceId)
-        }
-        return deviceId
-    }
-
-    /**
-     * 获取设备名称
-     */
-    private fun getDeviceName(): String {
-        return try {
-            "${Build.MANUFACTURER} ${Build.MODEL}"
-        } catch (e: Exception) {
-            "Unknown Device"
-        }
-    }
-
-    /**
-     * 执行完整同步
-     */
     suspend fun performSync(): Result<SyncResult> = withContext(Dispatchers.IO) {
-        // 应用语言设置到context
-        val localizedContext = LanguageManager.applyLanguage(context)
+        val localizedContext = LanguageManager.applyLanguage(appContext)
 
-        // 使用锁防止并发同步
         if (!syncLock.tryLock()) {
-            NPLogger.d(TAG, "Sync already in progress, skipping")
-            return@withContext Result.success(SyncResult(
-                success = true,
-                message = localizedContext.getString(R.string.github_sync_in_progress)
-            ))
+            return@withContext Result.failure(
+                GitHubSyncInProgressException(
+                    localizedContext.getString(R.string.github_sync_in_progress)
+                )
+            )
         }
 
         try {
             val token = storage.getToken()
             val owner = storage.getRepoOwner()
             val repo = storage.getRepoName()
-
             if (token == null || owner == null || repo == null) {
-                return@withContext Result.failure(IllegalStateException(localizedContext.getString(R.string.github_not_configured)))
+                return@withContext Result.failure(
+                    IllegalStateException(localizedContext.getString(R.string.github_not_configured))
+                )
             }
 
-            val apiClient = GitHubApiClient(context, token)
-
-            // 获取本地数据
-            val localData = buildLocalSyncData()
-
-            // 确定使用的文件名
+            val apiClient = GitHubApiClient(appContext, token)
+            val startMutationVersion = storage.getSyncMutationVersion()
+            val localData = sanitizeSyncData(buildLocalSyncData())
+            val uploadedDeletedPlaylistIds = localData.playlists
+                .asSequence()
+                .filter(SyncPlaylist::isDeleted)
+                .map(SyncPlaylist::id)
+                .toSet()
             val useDataSaver = storage.isDataSaverMode()
-            val fileName = SyncDataSerializer.getFileName(useDataSaver)
+            val preferredFileName = SyncDataSerializer.getFileName(useDataSaver)
 
-            // 尝试获取远程数据（优先使用当前格式，如果不存在则尝试另一种格式）
-            var remoteResult = apiClient.getFileContent(owner, repo, fileName)
-            var actualFileName = fileName
-
-            // 如果当前格式文件不存在，尝试另一种格式（兼容性处理）
-            if (remoteResult.isFailure) {
+            var remoteResult = apiClient.getFileContentStrict(owner, repo, preferredFileName)
+            var actualFileName = preferredFileName
+            if (remoteResult.exceptionOrNull() is GitHubFileNotFoundException) {
                 val alternativeFileName = SyncDataSerializer.getFileName(!useDataSaver)
-                val alternativeResult = apiClient.getFileContent(owner, repo, alternativeFileName)
+                val alternativeResult = apiClient.getFileContentStrict(owner, repo, alternativeFileName)
                 if (alternativeResult.isSuccess) {
                     remoteResult = alternativeResult
                     actualFileName = alternativeFileName
-                    NPLogger.d(TAG, "Using alternative file format: $alternativeFileName")
+                } else {
+                    val alternativeError = alternativeResult.exceptionOrNull()
+                    if (alternativeError !is GitHubFileNotFoundException) {
+                        if (alternativeError is TokenExpiredException) {
+                            storage.clearToken()
+                        }
+                        return@withContext Result.failure(
+                            alternativeError ?: IOException(localizedContext.getString(R.string.github_sync_failed_message))
+                        )
+                    }
                 }
             }
 
             if (remoteResult.isFailure) {
                 val error = remoteResult.exceptionOrNull()
-                // 检查是否是Token过期
                 if (error is TokenExpiredException) {
-                    NPLogger.e(TAG, "Token expired, clearing configuration")
-                    // 清除过期的Token，触发MainActivity显示警告
                     storage.clearToken()
                     return@withContext Result.failure(error)
                 }
-                // 远程文件不存在,直接上传本地数据
-                val uploadResult = uploadLocalData(apiClient, owner, repo, localData, null, fileName)
-                return@withContext if (uploadResult.isSuccess) {
-                    val newSha = uploadResult.getOrNull()
-                    if (newSha != null) {
-                        storage.saveLastRemoteSha(newSha)
-                    }
-                    storage.saveLastSyncTime(System.currentTimeMillis())
-                    Result.success(SyncResult(success = true, message = localizedContext.getString(R.string.sync_initial_uploaded)))
-                } else {
-                    val error = uploadResult.exceptionOrNull()
-                    // 检查是否是Token过期
-                    if (error is TokenExpiredException) {
-                        NPLogger.e(TAG, "Token expired during initial upload, clearing configuration")
-                        storage.clearToken()
-                        return@withContext Result.failure(error)
-                    }
-                    uploadResult.map { SyncResult(success = false, message = localizedContext.getString(R.string.sync_upload_failed)) }
+                if (error is GitHubFileNotFoundException) {
+                    return@withContext handleInitialUpload(
+                        apiClient = apiClient,
+                        owner = owner,
+                        repo = repo,
+                        localData = localData,
+                        sha = null,
+                        fileName = preferredFileName,
+                        localizedContext = localizedContext,
+                        startMutationVersion = startMutationVersion,
+                        uploadedDeletedPlaylistIds = uploadedDeletedPlaylistIds
+                    )
                 }
+                return@withContext Result.failure(
+                    error ?: IOException(localizedContext.getString(R.string.github_sync_failed_message))
+                )
             }
 
             val (remoteContent, remoteSha) = remoteResult.getOrThrow()
+            var actualRemoteSha = remoteSha
             if (remoteContent.isEmpty()) {
-                // 远程文件为空，可能是新文件（sha为空）或已存在的空文件（sha有值）
-                // 无论哪种情况，都传递remoteSha，updateFileContent会正确处理
-                val uploadResult = uploadLocalData(apiClient, owner, repo, localData, remoteSha, fileName)
-                return@withContext if (uploadResult.isSuccess) {
-                    val newSha = uploadResult.getOrNull()
-                    if (newSha != null) {
-                        storage.saveLastRemoteSha(newSha)
+                return@withContext Result.failure(
+                    IOException(localizedContext.getString(R.string.github_backup_file_invalid))
+                )
+            }
+
+            val remoteData = try {
+                sanitizeSyncData(
+                    SyncDataSerializer.deserialize(
+                    remoteContent,
+                    SyncDataSerializer.isBinaryFileName(actualFileName)
+                    )
+                )
+            } catch (e: Exception) {
+                // 解析失败时尝试另一种格式，再不行才报错
+                val alternativeFileName = SyncDataSerializer.getFileName(!useDataSaver)
+                val fallbackResult = if (alternativeFileName != actualFileName) {
+                    apiClient.getFileContentStrict(owner, repo, alternativeFileName).getOrNull()
+                } else null
+
+                val fallbackContent = fallbackResult?.first
+                val fallbackSha = fallbackResult?.second
+                val parsedFallback = if (!fallbackContent.isNullOrEmpty()) {
+                    runCatching {
+                        sanitizeSyncData(
+                            SyncDataSerializer.deserialize(
+                                fallbackContent,
+                                SyncDataSerializer.isBinaryFileName(alternativeFileName)
+                            )
+                        )
+                    }.getOrNull()
+                } else null
+
+                if (parsedFallback != null) {
+                    actualFileName = alternativeFileName
+                    if (!fallbackSha.isNullOrBlank()) {
+                        actualRemoteSha = fallbackSha
                     }
-                    storage.saveLastSyncTime(System.currentTimeMillis())
-                    Result.success(SyncResult(success = true, message = localizedContext.getString(R.string.sync_initial_uploaded)))
+                    parsedFallback
                 } else {
-                    val error = uploadResult.exceptionOrNull()
-                    // 检查是否是Token过期
-                    if (error is TokenExpiredException) {
-                        NPLogger.e(TAG, "Token expired during empty file upload, clearing configuration")
-                        storage.clearToken()
-                        return@withContext Result.failure(error)
-                    }
-                    uploadResult.map { SyncResult(success = false, message = localizedContext.getString(R.string.sync_upload_failed)) }
+                    NPLogger.e(TAG, "Failed to parse remote data", e)
+                    return@withContext Result.failure(e)
                 }
             }
 
-            // 解析远程数据
-            val isBinaryFormat = SyncDataSerializer.isBinaryFileName(actualFileName)
-            val remoteData = try {
-                SyncDataSerializer.deserialize(remoteContent, isBinaryFormat)
-            } catch (e: Exception) {
-                NPLogger.e(TAG, "Failed to parse remote data", e)
-                return@withContext Result.failure(e)
-            }
-
-            // 检测远程是否有变化（通过SHA）
             val lastRemoteSha = storage.getLastRemoteSha()
             val isFirstSync = lastRemoteSha == null
-            val remoteHasChanged = lastRemoteSha != null && lastRemoteSha != remoteSha
+            val remoteHasChanged = lastRemoteSha != null && lastRemoteSha != actualRemoteSha
+            val lastSyncTime = storage.getLastSyncTime()
+            val mergeResult = performThreeWayMerge(localData, remoteData, lastSyncTime)
+            val localMutatedDuringSync =
+                storage.getSyncMutationVersion() != startMutationVersion
 
-            if (isFirstSync) {
-                NPLogger.d(TAG, "First sync detected, prioritizing remote data")
-            } else if (remoteHasChanged) {
-                NPLogger.d(TAG, "Remote file has changed (SHA mismatch)")
+            if (!localMutatedDuringSync) {
+                applyMergedDataToLocal(
+                    mergedData = mergeResult.mergedData,
+                    remoteHasChanged = isFirstSync || remoteHasChanged
+                )
+            } else {
+                NPLogger.w(TAG, "Skip applying merged sync data because local state changed during sync")
             }
 
-            // 三路合并（传递首次同步标记）
-            val mergeResult = performThreeWayMerge(localData, remoteData, isFirstSync)
-
-            // 应用合并结果到本地（传递首次同步和远程变化标记）
-            applyMergedDataToLocal(mergeResult.mergedData, isFirstSync || remoteHasChanged)
-
-            // 检查数据是否有变化（优化流量）
-            val dataChanged = hasDataChanged(remoteData, mergeResult.mergedData)
-            if (!dataChanged && !remoteHasChanged) {
-                NPLogger.d(TAG, "No data changes detected, skipping upload to save bandwidth")
-                // 即使不上传，也要保存SHA和时间
-                storage.saveLastRemoteSha(remoteSha)
+            if (!hasDataChanged(remoteData, mergeResult.mergedData) && !remoteHasChanged) {
+                storage.saveLastRemoteSha(actualRemoteSha)
                 storage.saveLastSyncTime(System.currentTimeMillis())
-                return@withContext Result.success(SyncResult(
-                    success = true,
-                    message = localizedContext.getString(R.string.github_sync_no_change)
-                ))
+                if (localMutatedDuringSync) {
+                    GitHubSyncWorker.scheduleDelayedSync(
+                        appContext,
+                        triggerByUserAction = false,
+                        markMutation = false
+                    )
+                }
+                return@withContext Result.success(
+                    SyncResult(
+                        success = true,
+                        message = localizedContext.getString(R.string.github_sync_no_change)
+                    )
+                )
             }
 
-            // 上传合并后的数据
-            val uploadResult = uploadLocalData(apiClient, owner, repo, mergeResult.mergedData, remoteSha, fileName)
+            val uploadResult = uploadLocalData(
+                apiClient = apiClient,
+                owner = owner,
+                repo = repo,
+                data = mergeResult.mergedData,
+                sha = actualRemoteSha,
+                fileName = actualFileName
+            )
+
             if (uploadResult.isFailure) {
                 val error = uploadResult.exceptionOrNull()
-                // 检查是否是Token过期
                 if (error is TokenExpiredException) {
-                    NPLogger.e(TAG, "Token expired during upload, clearing configuration")
-                    // 清除过期的Token，触发MainActivity显示警告
                     storage.clearToken()
-                    return@withContext Result.failure(error)
                 }
-                return@withContext Result.failure(uploadResult.exceptionOrNull() ?: Exception(localizedContext.getString(R.string.sync_upload_failed)))
+                return@withContext Result.failure(
+                    error ?: Exception(localizedContext.getString(R.string.sync_upload_failed))
+                )
             }
 
-            // 保存上传后的新SHA
-            val newSha = uploadResult.getOrNull()
-            if (newSha != null) {
-                storage.saveLastRemoteSha(newSha)
-            }
-
-            // 更新最后同步时间
+            uploadResult.getOrNull()?.let { storage.saveLastRemoteSha(it) }
             storage.saveLastSyncTime(System.currentTimeMillis())
-
-            // 清除已删除的歌单ID列表（同步成功后）
-            storage.clearDeletedPlaylistIds()
-
+            storage.removeDeletedPlaylistIds(uploadedDeletedPlaylistIds)
+            if (localMutatedDuringSync) {
+                GitHubSyncWorker.scheduleDelayedSync(
+                    appContext,
+                    triggerByUserAction = false,
+                    markMutation = false
+                )
+            }
             Result.success(mergeResult.syncResult)
-
         } catch (e: Exception) {
             NPLogger.e(TAG, "Sync failed", e)
             Result.failure(e)
@@ -273,60 +238,90 @@ class GitHubSyncManager(private val context: Context) {
         }
     }
 
-    /**
-     * 构建本地同步数据
-     */
+    private suspend fun handleInitialUpload(
+        apiClient: GitHubApiClient,
+        owner: String,
+        repo: String,
+        localData: SyncData,
+        sha: String?,
+        fileName: String,
+        localizedContext: Context,
+        startMutationVersion: Long,
+        uploadedDeletedPlaylistIds: Set<Long>
+    ): Result<SyncResult> {
+        val uploadResult = uploadLocalData(apiClient, owner, repo, localData, sha, fileName)
+        if (uploadResult.isSuccess) {
+            uploadResult.getOrNull()?.let { storage.saveLastRemoteSha(it) }
+            storage.saveLastSyncTime(System.currentTimeMillis())
+            storage.removeDeletedPlaylistIds(uploadedDeletedPlaylistIds)
+            if (storage.getSyncMutationVersion() != startMutationVersion) {
+                GitHubSyncWorker.scheduleDelayedSync(
+                    appContext,
+                    triggerByUserAction = false,
+                    markMutation = false
+                )
+            }
+            return Result.success(
+                SyncResult(
+                    success = true,
+                    message = localizedContext.getString(R.string.sync_initial_uploaded)
+                )
+            )
+        }
+
+        val error = uploadResult.exceptionOrNull()
+        if (error is TokenExpiredException) {
+            storage.clearToken()
+            return Result.failure(error)
+        }
+        return Result.failure(
+            error ?: IOException(localizedContext.getString(R.string.sync_upload_failed))
+        )
+    }
+
     private fun buildLocalSyncData(): SyncData {
         val playlists = playlistRepo.playlists.value
         val syncPlaylists = playlists.map { playlist ->
-            SyncPlaylist.fromLocalPlaylist(playlist, playlist.modifiedAt, context)
+            SyncPlaylist.fromLocalPlaylist(playlist, playlist.modifiedAt, appContext)
         }.toMutableList()
 
-        // 添加已删除的歌单（标记为已删除）
-        val deletedIds = storage.getDeletedPlaylistIds()
-        deletedIds.forEach { deletedId ->
-            // 只添加不在当前歌单列表中的删除记录
+        storage.getDeletedPlaylistIds().forEach { deletedId ->
             if (playlists.none { it.id == deletedId }) {
-                syncPlaylists.add(
-                    SyncPlaylist(
-                        id = deletedId,
-                        name = "",
-                        songs = emptyList(),
-                        createdAt = 0L,
-                        modifiedAt = System.currentTimeMillis(),
-                        isDeleted = true
-                    )
+                syncPlaylists += SyncPlaylist(
+                    id = deletedId,
+                    name = "",
+                    songs = emptyList(),
+                    createdAt = 0L,
+                    modifiedAt = System.currentTimeMillis(),
+                    isDeleted = true
                 )
             }
         }
 
-        val favoritePlaylists = favoriteRepo.favorites.value
-        val syncFavoritePlaylists = favoritePlaylists.map { playlist ->
-            SyncFavoritePlaylist.fromFavoritePlaylist(playlist, context)
+        val syncFavoritePlaylists = favoriteRepo.getSyncSnapshots().map {
+            SyncFavoritePlaylist.fromFavoritePlaylist(it, appContext)
         }
 
-        // 获取播放历史（限制最多500条）
-        val playHistory = playHistoryRepo.historyFlow.value.take(500)
-        NPLogger.d(TAG, "Building local sync data: play history count=${playHistory.size}")
-        if (playHistory.isNotEmpty()) {
-            NPLogger.d(TAG, "Latest play: songId=${playHistory[0].id}, playedAt=${playHistory[0].playedAt}, name=${playHistory[0].name}")
-        }
-        val syncRecentPlays = playHistory.map { playedEntry ->
-            SyncRecentPlay(
-                songId = playedEntry.id,
-                song = SyncSong(
-                    id = playedEntry.id,
-                    name = playedEntry.name,
-                    artist = playedEntry.artist,
-                    album = playedEntry.album,
-                    albumId = playedEntry.albumId,
-                    durationMs = playedEntry.durationMs,
-                    coverUrl = playedEntry.coverUrl
-                ),
-                playedAt = playedEntry.playedAt,
-                deviceId = getDeviceId()
-            )
-        }
+        val syncRecentPlays = playHistoryRepo.historyFlow.value
+            .filterNot { LocalSongSupport.isLocalSong(it.album, it.mediaUri, it.albumId, appContext) }
+            .take(500)
+            .map { playedEntry ->
+                SyncRecentPlay(
+                    songId = playedEntry.id,
+                    song = SyncSong(
+                        id = playedEntry.id,
+                        name = playedEntry.name,
+                        artist = playedEntry.artist,
+                        album = playedEntry.album,
+                        albumId = playedEntry.albumId,
+                        durationMs = playedEntry.durationMs,
+                        coverUrl = playedEntry.coverUrl,
+                        mediaUri = LocalSongSupport.sanitizeMediaUriForSync(playedEntry.mediaUri)
+                    ),
+                    playedAt = playedEntry.playedAt,
+                    deviceId = getDeviceId()
+                )
+            }
 
         return SyncData(
             deviceId = getDeviceId(),
@@ -339,13 +334,12 @@ class GitHubSyncManager(private val context: Context) {
         )
     }
 
-    /**
-     * 三路合并算法
-     * 自动解决冲突
-     * @param isFirstSync 是否首次同步（首次同步时优先使用远程数据）
-     */
-    private fun performThreeWayMerge(local: SyncData, remote: SyncData, isFirstSync: Boolean = false): MergeResult {
-        val localizedContext = LanguageManager.applyLanguage(context)
+    private fun performThreeWayMerge(
+        local: SyncData,
+        remote: SyncData,
+        lastSyncTime: Long
+    ): MergeResult {
+        val localizedContext = LanguageManager.applyLanguage(appContext)
         val conflicts = mutableListOf<SyncConflict>()
         var playlistsAdded = 0
         var playlistsUpdated = 0
@@ -353,64 +347,55 @@ class GitHubSyncManager(private val context: Context) {
         var songsAdded = 0
         var songsRemoved = 0
 
-        // 合并歌单
         val mergedPlaylists = mutableListOf<SyncPlaylist>()
         val localPlaylistsMap = local.playlists.associateBy { it.id }
         val remotePlaylistsMap = remote.playlists.associateBy { it.id }
-
-        // 处理所有歌单ID
         val allPlaylistIds = (localPlaylistsMap.keys + remotePlaylistsMap.keys).toSet()
 
         for (playlistId in allPlaylistIds) {
             val localPlaylist = localPlaylistsMap[playlistId]
             val remotePlaylist = remotePlaylistsMap[playlistId]
-
             when {
-                // 只在本地存在 -> 新增（除非标记为已删除）
                 localPlaylist != null && remotePlaylist == null -> {
                     if (!localPlaylist.isDeleted) {
-                        mergedPlaylists.add(localPlaylist)
+                        mergedPlaylists += localPlaylist
                         playlistsAdded++
                     } else {
                         playlistsDeleted++
                     }
                 }
 
-                // 只在远程存在 -> 新增（除非标记为已删除）
                 localPlaylist == null && remotePlaylist != null -> {
                     if (!remotePlaylist.isDeleted) {
-                        mergedPlaylists.add(remotePlaylist)
+                        mergedPlaylists += remotePlaylist
                         playlistsAdded++
                     } else {
                         playlistsDeleted++
                     }
                 }
 
-                // 两端都存在 -> 合并
                 localPlaylist != null && remotePlaylist != null -> {
-                    // 如果任一端标记为已删除，则不包含在合并结果中
                     if (localPlaylist.isDeleted || remotePlaylist.isDeleted) {
                         playlistsDeleted++
                     } else {
-                        val merged = mergePlaylist(localPlaylist, remotePlaylist, isFirstSync)
-                        mergedPlaylists.add(merged.playlist)
-
-                        if (merged.hasConflict) {
-                            conflicts.add(merged.conflict!!)
+                        val merged = mergePlaylist(localPlaylist, remotePlaylist, lastSyncTime)
+                        mergedPlaylists += merged.playlist
+                        merged.conflict?.let { conflicts += it }
+                        songsAdded += merged.songsAdded
+                        songsRemoved += merged.songsRemoved
+                        if (merged.isUpdated) {
+                            playlistsUpdated++
                         }
-
-                        if (merged.songsAdded > 0) songsAdded += merged.songsAdded
-                        if (merged.songsRemoved > 0) songsRemoved += merged.songsRemoved
-                        if (merged.isUpdated) playlistsUpdated++
                     }
                 }
             }
         }
 
-        // 合并收藏歌单（简单合并，按addedTime去重）
-        val mergedFavoritePlaylists = (local.favoritePlaylists + (remote.favoritePlaylists ?: emptyList()))
+        val mergedFavoritePlaylists = (local.favoritePlaylists + remote.favoritePlaylists)
             .groupBy { "${it.id}_${it.source}" }
-            .map { (_, playlists) -> playlists.maxByOrNull { it.addedTime }!! }
+            .map { (_, snapshots) ->
+                snapshots.reduce(::mergeFavoritePlaylist)
+            }
 
         val mergedData = SyncData(
             deviceId = local.deviceId,
@@ -419,42 +404,60 @@ class GitHubSyncManager(private val context: Context) {
             playlists = mergedPlaylists,
             favoritePlaylists = mergedFavoritePlaylists,
             recentPlays = mergeRecentPlays(local.recentPlays, remote.recentPlays),
-            syncLog = ((local.syncLog ?: emptyList()) + (remote.syncLog ?: emptyList())).distinctBy { it.timestamp }.sortedByDescending { it.timestamp }.take(100)
+            syncLog = (local.syncLog + remote.syncLog)
+                .distinctBy { it.timestamp }
+                .sortedByDescending { it.timestamp }
+                .take(100)
         )
 
-        val syncResult = SyncResult(
-            success = true,
-            message = localizedContext.getString(R.string.github_sync_success_detail),
-            playlistsAdded = playlistsAdded,
-            playlistsUpdated = playlistsUpdated,
-            playlistsDeleted = playlistsDeleted,
-            songsAdded = songsAdded,
-            songsRemoved = songsRemoved,
-            conflicts = conflicts
+        return MergeResult(
+            mergedData = mergedData,
+            syncResult = SyncResult(
+                success = true,
+                message = localizedContext.getString(R.string.github_sync_success_detail),
+                playlistsAdded = playlistsAdded,
+                playlistsUpdated = playlistsUpdated,
+                playlistsDeleted = playlistsDeleted,
+                songsAdded = songsAdded,
+                songsRemoved = songsRemoved,
+                conflicts = conflicts
+            )
         )
-
-        return MergeResult(mergedData, syncResult)
     }
 
-    /**
-     * 合并单个歌单
-     * 策略：首次同步优先远程 > 最后修改时间优先
-     * - 如果是首次同步，优先使用远程数据（避免覆盖其他设备的数据）
-     * - 否则使用修改时间更新的一端
-     */
-    private fun mergePlaylist(local: SyncPlaylist, remote: SyncPlaylist, isFirstSync: Boolean = false): PlaylistMergeResult {
-        val localizedContext = LanguageManager.applyLanguage(context)
-        var hasConflict = false
+    private fun mergePlaylist(
+        local: SyncPlaylist,
+        remote: SyncPlaylist,
+        lastSyncTime: Long
+    ): PlaylistMergeResult {
+        val localizedContext = LanguageManager.applyLanguage(appContext)
         var conflict: SyncConflict? = null
-        var songsAdded = 0
-        var songsRemoved = 0
+        var hasConflict = false
         var isUpdated = false
 
-        // 检查名称冲突
-        val finalName = if (local.name != remote.name) {
-            hasConflict = true
-            // 使用最新修改时间的名称
-            if (local.modifiedAt > remote.modifiedAt) {
+        val systemDescriptor = SystemLocalPlaylists.resolve(local.id, local.name, localizedContext)
+            ?: SystemLocalPlaylists.resolve(remote.id, remote.name, localizedContext)
+        val isFavorites = systemDescriptor?.id == FavoritesPlaylist.SYSTEM_ID
+        val localChangedAfterSync = local.modifiedAt > lastSyncTime
+        val remoteChangedAfterSync = remote.modifiedAt > lastSyncTime
+
+        val finalName = when {
+            systemDescriptor != null -> systemDescriptor.currentName
+            local.name == remote.name -> local.name
+            remoteChangedAfterSync && !localChangedAfterSync -> {
+                hasConflict = true
+                isUpdated = true
+                conflict = SyncConflict(
+                    type = ConflictType.PLAYLIST_RENAMED_BOTH_SIDES,
+                    playlistId = remote.id,
+                    playlistName = remote.name,
+                    description = localizedContext.getString(R.string.github_playlist_renamed_remote, remote.name),
+                    resolution = ConflictResolution.REMOTE_WINS
+                )
+                remote.name
+            }
+            localChangedAfterSync && !remoteChangedAfterSync -> {
+                hasConflict = true
                 conflict = SyncConflict(
                     type = ConflictType.PLAYLIST_RENAMED_BOTH_SIDES,
                     playlistId = local.id,
@@ -463,82 +466,74 @@ class GitHubSyncManager(private val context: Context) {
                     resolution = ConflictResolution.LOCAL_WINS
                 )
                 local.name
-            } else {
+            }
+            else -> {
+                hasConflict = true
                 conflict = SyncConflict(
                     type = ConflictType.PLAYLIST_RENAMED_BOTH_SIDES,
                     playlistId = local.id,
-                    playlistName = remote.name,
-                    description = localizedContext.getString(R.string.github_playlist_renamed_remote, remote.name),
-                    resolution = ConflictResolution.REMOTE_WINS
+                    playlistName = local.name,
+                    description = localizedContext.getString(R.string.github_playlist_renamed_local, local.name),
+                    resolution = ConflictResolution.MANUAL_REQUIRED
                 )
-                isUpdated = true
-                remote.name
+                local.name
             }
-        } else {
-            local.name
         }
 
-        // 合并歌曲列表 - 首次同步优先远程 > 最后修改时间
-        val localSongIds = local.songs.map { it.id }.toSet()
-        val remoteSongIds = remote.songs.map { it.id }.toSet()
+        val localSongs = local.songs.map { it.identity() }.toSet()
+        val remoteSongs = remote.songs.map { it.identity() }.toSet()
+        val preferRemoteFavorites = isFavorites && localSongs.isEmpty() && remoteSongs.isNotEmpty()
 
-        // 智能合并策略：
-        // 1. 如果远程为空而本地有数据 -> 保留本地数据（防止初始化时数据丢失）
-        // 2. 如果本地为空而远程有数据 -> 使用远程数据
-        // 3. 如果是首次同步且远程有数据 -> 优先使用远程数据（避免覆盖其他设备的数据）
-        // 4. 如果两端都有数据 -> 使用最后修改时间更新的一端（尊重用户操作）
-        val (mergedSongs, finalModifiedAt) = when {
-            remoteSongIds.isEmpty() && localSongIds.isNotEmpty() -> {
-                // 远程为空，本地有数据 -> 保留本地（防止数据丢失）
-                NPLogger.d(TAG, "Remote playlist '${local.name}' is empty, keeping local songs (${localSongIds.size} songs)")
-                Pair(local.songs, local.modifiedAt)
-            }
-            localSongIds.isEmpty() && remoteSongIds.isNotEmpty() -> {
-                // 本地为空，远程有数据 -> 使用远程
-                isUpdated = true
-                songsAdded = remoteSongIds.size
-                Pair(remote.songs, remote.modifiedAt)
-            }
-            isFirstSync && remoteSongIds.isNotEmpty() -> {
-                // 首次同步且远程有数据 -> 优先使用远程数据
-                NPLogger.d(TAG, "First sync: using remote playlist '${local.name}' (${remoteSongIds.size} songs)")
-                isUpdated = true
-                songsAdded = (remoteSongIds - localSongIds).size
-                songsRemoved = (localSongIds - remoteSongIds).size
-                Pair(remote.songs, remote.modifiedAt)
-            }
-            else -> {
-                // 两端都有数据 -> 使用最后修改时间更新的一端
-                if (remote.modifiedAt > local.modifiedAt) {
-                    // 远程更新，使用远程数据
-                    NPLogger.d(TAG, "Remote playlist '${local.name}' is newer (remote=${remote.modifiedAt}, local=${local.modifiedAt}), using remote songs")
-                    isUpdated = true
-                    songsAdded = (remoteSongIds - localSongIds).size
-                    songsRemoved = (localSongIds - remoteSongIds).size
-                    Pair(remote.songs, remote.modifiedAt)
-                } else {
-                    // 本地更新或相同，使用本地数据
-                    NPLogger.d(TAG, "Local playlist '${local.name}' is newer or same (local=${local.modifiedAt}, remote=${remote.modifiedAt}), using local songs")
-                    songsAdded = (remoteSongIds - localSongIds).size
-                    songsRemoved = (localSongIds - remoteSongIds).size
-                    if (songsAdded > 0 || songsRemoved > 0) {
-                        isUpdated = true
-                    }
-                    Pair(local.songs, local.modifiedAt)
+        fun mergeSongsPreservingLocal(
+            localList: List<SyncSong>,
+            remoteList: List<SyncSong>
+        ): List<SyncSong> {
+            val merged = localList.toMutableList()
+            val known = localList.map { it.identity() }.toMutableSet()
+            remoteList.forEach { song ->
+                if (known.add(song.identity())) {
+                    merged += song
                 }
             }
+            return merged
         }
 
-        val mergedPlaylist = SyncPlaylist(
-            id = local.id,
-            name = finalName,
-            songs = mergedSongs,
-            createdAt = local.createdAt,
-            modifiedAt = finalModifiedAt
-        )
+        val mergedSongs = when {
+            remoteSongs.isEmpty() && localSongs.isNotEmpty() -> local.songs
+            localSongs.isEmpty() && remoteSongs.isNotEmpty() -> {
+                isUpdated = true
+                remote.songs
+            }
+            preferRemoteFavorites && !localChangedAfterSync -> {
+                isUpdated = true
+                remote.songs
+            }
+            remoteChangedAfterSync && !localChangedAfterSync -> {
+                isUpdated = true
+                remote.songs
+            }
+            localChangedAfterSync && !remoteChangedAfterSync -> local.songs
+            else -> {
+                val merged = mergeSongsPreservingLocal(local.songs, remote.songs)
+                if (merged.size != local.songs.size || merged.size != remote.songs.size) {
+                    isUpdated = true
+                }
+                merged
+            }
+        }
+
+        val mergedIdentities = mergedSongs.map { it.identity() }.toSet()
+        val songsAdded = (mergedIdentities - localSongs).size
+        val songsRemoved = (localSongs - mergedIdentities).size
 
         return PlaylistMergeResult(
-            playlist = mergedPlaylist,
+            playlist = SyncPlaylist(
+                id = systemDescriptor?.id ?: local.id,
+                name = finalName,
+                songs = mergedSongs,
+                createdAt = minOf(local.createdAt, remote.createdAt),
+                modifiedAt = maxOf(local.modifiedAt, remote.modifiedAt)
+            ),
             hasConflict = hasConflict,
             conflict = conflict,
             songsAdded = songsAdded,
@@ -547,129 +542,100 @@ class GitHubSyncManager(private val context: Context) {
         )
     }
 
-    /**
-     * 合并最近播放
-     */
     private fun mergeRecentPlays(local: List<SyncRecentPlay>, remote: List<SyncRecentPlay>): List<SyncRecentPlay> {
-        NPLogger.d(TAG, "Merging play history: local=${local.size}, remote=${remote.size}")
-        val merged = (local + remote)
-            .distinctBy { it.songId to it.playedAt }
+        return (local + remote)
+            .distinctBy { "${it.song.identity()}|${it.playedAt}|${it.deviceId}" }
             .sortedByDescending { it.playedAt }
             .take(500)
-        NPLogger.d(TAG, "Merged play history: ${merged.size} entries")
-        if (merged.isNotEmpty()) {
-            NPLogger.d(TAG, "Latest merged play: songId=${merged[0].songId}, playedAt=${merged[0].playedAt}")
-        }
-        return merged
     }
 
-    /**
-     * 应用合并后的数据到本地
-     * 使用智能合并策略，避免重复歌单
-     * 特殊处理："我喜欢的音乐"始终置顶且按名称匹配
-     * @param remoteHasChanged 远程是否有变化，只有远程有变化时才应用播放历史
-     */
+    private fun mergeFavoritePlaylist(
+        left: SyncFavoritePlaylist,
+        right: SyncFavoritePlaylist
+    ): SyncFavoritePlaylist {
+        val newer = if (right.modifiedAt > left.modifiedAt) right else left
+        val older = if (newer === left) right else left
+
+        if (left.isDeleted != right.isDeleted) {
+            return if (left.modifiedAt == right.modifiedAt) {
+                newer.copy(
+                    songs = if (newer.isDeleted) emptyList() else (left.songs + right.songs).distinctBy { it.identity() },
+                    trackCount = if (newer.isDeleted) 0 else maxOf(left.trackCount, right.trackCount, left.songs.size, right.songs.size)
+                )
+            } else {
+                if (newer.isDeleted) {
+                    newer.copy(songs = emptyList(), trackCount = 0)
+                } else {
+                    newer.copy(
+                        songs = (left.songs + right.songs).distinctBy { it.identity() },
+                        trackCount = maxOf(left.trackCount, right.trackCount, left.songs.size, right.songs.size)
+                    )
+                }
+            }
+        }
+
+        if (newer.isDeleted) {
+            return newer.copy(
+                songs = emptyList(),
+                trackCount = 0,
+                addedTime = maxOf(left.addedTime, right.addedTime)
+            )
+        }
+
+        val mergedSongs = (left.songs + right.songs).distinctBy { it.identity() }
+        return newer.copy(
+            coverUrl = newer.coverUrl ?: older.coverUrl,
+            songs = mergedSongs,
+            trackCount = maxOf(left.trackCount, right.trackCount, mergedSongs.size),
+            addedTime = maxOf(left.addedTime, right.addedTime),
+            modifiedAt = maxOf(left.modifiedAt, right.modifiedAt),
+            isDeleted = false
+        )
+    }
+
     private suspend fun applyMergedDataToLocal(mergedData: SyncData, remoteHasChanged: Boolean) {
-        val localizedContext = LanguageManager.applyLanguage(context)
-        // 应用本地歌单 - 只更新存在于mergedData中的歌单，不删除本地独有的歌单
-        val currentPlaylists = playlistRepo.playlists.value.toMutableList()
-        val currentPlaylistsById = currentPlaylists.associateBy { it.id }.toMutableMap()
-        val currentPlaylistsByName = currentPlaylists.associateBy { it.name }.toMutableMap()
-
-        // 更新或添加来自mergedData的歌单
-        val possibleFavoriteNames = listOf("我喜欢的音乐", "My Favorite Music")
-        val currentFavoritesName = localizedContext.getString(R.string.favorite_my_music)
-
-        for (syncPlaylist in mergedData.playlists) {
-            // 优先按名称匹配系统歌单（"我喜欢的音乐"），支持跨语言匹配
-            val existingPlaylist = if (syncPlaylist.name in possibleFavoriteNames) {
-                // 这是收藏歌单，按所有可能的名称查找
-                possibleFavoriteNames.firstNotNullOfOrNull { name ->
-                    currentPlaylistsByName[name]
-                }
-            } else {
-                currentPlaylistsById[syncPlaylist.id] ?: currentPlaylistsByName[syncPlaylist.name]
-            }
-
-            if (existingPlaylist != null) {
-                // 歌单已存在，统一按时间戳判断使用哪个版本
-                val updatedPlaylist = when {
-                    // 本地时间戳更新 -> 保留本地版本（包括清空歌单的情况）
-                    existingPlaylist.modifiedAt > syncPlaylist.modifiedAt -> {
-                        NPLogger.d(TAG, "Local playlist '${existingPlaylist.name}' is newer (local=${existingPlaylist.modifiedAt}, remote=${syncPlaylist.modifiedAt}), keeping local version (${existingPlaylist.songs.size} songs)")
-                        existingPlaylist
-                    }
-                    // 远程时间戳更新或相同 -> 使用远程版本
-                    else -> {
-                        NPLogger.d(TAG, "Remote playlist '${syncPlaylist.name}' is newer or same (local=${existingPlaylist.modifiedAt}, remote=${syncPlaylist.modifiedAt}), using remote version (${syncPlaylist.songs.size} songs)")
-                        existingPlaylist.copy(
-                            name = if (syncPlaylist.name in possibleFavoriteNames) currentFavoritesName else syncPlaylist.name,
-                            songs = syncPlaylist.songs.map { it.toSongItem() }.toMutableList(),
-                            modifiedAt = syncPlaylist.modifiedAt
-                        )
-                    }
-                }
-                // 从两个map中移除旧的，添加新的
-                currentPlaylistsById.remove(existingPlaylist.id)
-                currentPlaylistsByName.remove(existingPlaylist.name)
-                currentPlaylistsById[updatedPlaylist.id] = updatedPlaylist
-                currentPlaylistsByName[updatedPlaylist.name] = updatedPlaylist
-            } else {
-                // 新歌单，添加它
-                val newPlaylist = syncPlaylist.toLocalPlaylist()
-                currentPlaylistsById[newPlaylist.id] = newPlaylist
-                currentPlaylistsByName[newPlaylist.name] = newPlaylist
-            }
+        val localizedContext = LanguageManager.applyLanguage(appContext)
+        val sanitizedMergedData = sanitizeSyncData(mergedData)
+        val currentPlaylists = playlistRepo.playlists.value.associateBy { playlist ->
+            SystemLocalPlaylists.resolve(playlist.id, playlist.name, localizedContext)?.id ?: playlist.id
         }
-
-        // 确保"我喜欢的音乐"存在且置顶
-        val allPlaylists = currentPlaylistsById.values.toMutableList()
-        val favoritesPlaylist = allPlaylists.firstOrNull { it.name == "我喜欢的音乐" || it.name == "My Favorite Music" }
-
-        if (favoritesPlaylist != null) {
-            // 移除"我喜欢的音乐"，然后添加到第一位
-            allPlaylists.remove(favoritesPlaylist)
-            allPlaylists.add(0, favoritesPlaylist)
-        } else {
-            // 如果不存在，创建一个新的"我喜欢的音乐"并置顶
-            val newFavorites = LocalPlaylist(
-                id = System.currentTimeMillis(),
-                name = localizedContext.getString(R.string.favorite_my_music),
-                songs = mutableListOf()
+        val mergedLocalPlaylists = sanitizedMergedData.playlists.map { syncPlaylist ->
+            val systemDescriptor = SystemLocalPlaylists.resolve(
+                syncPlaylist.id,
+                syncPlaylist.name,
+                localizedContext
             )
-            allPlaylists.add(0, newFavorites)
-        }
+            val normalizedId = systemDescriptor?.id ?: syncPlaylist.id
+            val syncedSongs = syncPlaylist.songs.map { it.toSongItem() }
+            val preservedLocalSongs = currentPlaylists[normalizedId]
+                ?.songs
+                .orEmpty()
+                .filter { LocalSongSupport.isLocalSong(it, localizedContext) }
 
-        // 更新仓库（保留所有歌单，"我喜欢的音乐"置顶）
-        playlistRepo.updatePlaylists(allPlaylists)
-
-        // 应用收藏歌单（使用FavoritePlaylistRepository的addFavorite方法，自动去重）
-        for (syncFavorite in mergedData.favoritePlaylists) {
-            val favorite = syncFavorite.toFavoritePlaylist()
-            favoriteRepo.addFavorite(
-                id = favorite.id,
-                name = favorite.name,
-                coverUrl = favorite.coverUrl,
-                trackCount = favorite.trackCount,
-                source = favorite.source,
-                songs = favorite.songs
+            LocalPlaylist(
+                id = normalizedId,
+                name = systemDescriptor?.currentName ?: syncPlaylist.name,
+                songs = mergeLocalOnlySongs(syncedSongs, preservedLocalSongs),
+                modifiedAt = syncPlaylist.modifiedAt,
+                customCoverUrl = currentPlaylists[normalizedId]?.customCoverUrl
             )
         }
+        playlistRepo.updatePlaylists(mergedLocalPlaylists)
 
-        // 应用播放历史
-        // 条件：1) 远程有变化，或 2) 本地为空但远程有数据（恢复场景）
+        favoriteRepo.replaceFavoritesFromSync(
+            sanitizedMergedData.favoritePlaylists.map { it.toFavoritePlaylist() }
+        )
+
         val localPlayHistoryEmpty = playHistoryRepo.historyFlow.value.isEmpty()
         val shouldApplyRemoteHistory = remoteHasChanged ||
-            (localPlayHistoryEmpty && mergedData.recentPlays.isNotEmpty())
+            (localPlayHistoryEmpty && sanitizedMergedData.recentPlays.isNotEmpty())
 
         if (shouldApplyRemoteHistory) {
-            val reason = when {
-                remoteHasChanged -> "remote changed"
-                localPlayHistoryEmpty -> "local empty, restoring from remote"
-                else -> "unknown"
-            }
-            NPLogger.d(TAG, "Applying remote play history to local (${mergedData.recentPlays.size} entries, reason: $reason)")
-            val playHistory = mergedData.recentPlays.map { syncPlay ->
+            val syncedHistory = sanitizedMergedData.recentPlays.mapNotNull { syncPlay ->
+                if (LocalSongSupport.isLocalSong(syncPlay.song.album, syncPlay.song.mediaUri, syncPlay.song.albumId, localizedContext)) {
+                    return@mapNotNull null
+                }
+
                 PlayedEntry(
                     id = syncPlay.song.id,
                     name = syncPlay.song.name,
@@ -678,76 +644,154 @@ class GitHubSyncManager(private val context: Context) {
                     albumId = syncPlay.song.albumId,
                     durationMs = syncPlay.song.durationMs,
                     coverUrl = syncPlay.song.coverUrl,
+                    mediaUri = LocalSongSupport.sanitizeMediaUriForSync(syncPlay.song.mediaUri),
                     playedAt = syncPlay.playedAt
                 )
             }
+            val localOnlyHistory = playHistoryRepo.historyFlow.value.filter {
+                LocalSongSupport.isLocalSong(it.album, it.mediaUri, it.albumId, localizedContext)
+            }
+            val playHistory = mergeLocalOnlyHistory(syncedHistory, localOnlyHistory)
             playHistoryRepo.updateHistory(playHistory)
-        } else {
-            NPLogger.d(TAG, "Skipping play history update (no remote changes)")
         }
     }
 
-    /**
-     * 检查数据是否有变化（用于优化流量）
-     * 比较歌单、收藏和播放历史的数量和内容
-     */
+    private fun mergeLocalOnlySongs(
+        syncedSongs: List<moe.ouom.neriplayer.ui.viewmodel.playlist.SongItem>,
+        localOnlySongs: List<moe.ouom.neriplayer.ui.viewmodel.playlist.SongItem>
+    ): MutableList<moe.ouom.neriplayer.ui.viewmodel.playlist.SongItem> {
+        val merged = syncedSongs.toMutableList()
+        val knownIdentities = merged.map { it.identity() }.toMutableSet()
+        localOnlySongs.forEach { song ->
+            if (knownIdentities.add(song.identity())) {
+                merged += song
+            }
+        }
+        return merged
+    }
+
+    private fun mergeLocalOnlyHistory(
+        syncedHistory: List<PlayedEntry>,
+        localOnlyHistory: List<PlayedEntry>
+    ): List<PlayedEntry> {
+        return (syncedHistory + localOnlyHistory)
+            .distinctBy { "${it.id}|${it.album}|${it.mediaUri.orEmpty()}|${it.playedAt}" }
+            .sortedByDescending { it.playedAt }
+            .take(500)
+    }
+
+    private fun sanitizeSyncData(data: SyncData): SyncData {
+        return data.copy(
+            playlists = data.playlists.mapNotNull { sanitizeSyncPlaylist(it) },
+            favoritePlaylists = data.favoritePlaylists.map { sanitizeSyncFavoritePlaylist(it) },
+            recentPlays = data.recentPlays.mapNotNull { sanitizeRecentPlay(it) }
+        )
+    }
+
+    private fun sanitizeSyncPlaylist(playlist: SyncPlaylist): SyncPlaylist? {
+        val localizedContext = LanguageManager.applyLanguage(appContext)
+        val systemDescriptor = SystemLocalPlaylists.resolve(playlist.id, playlist.name, localizedContext)
+        if (systemDescriptor?.id == LocalFilesPlaylist.SYSTEM_ID) {
+            return null
+        }
+        return playlist.copy(
+            id = systemDescriptor?.id ?: playlist.id,
+            name = systemDescriptor?.currentName ?: playlist.name,
+            songs = playlist.songs.mapNotNull { sanitizeSyncSong(it) }
+        )
+    }
+
+    private fun sanitizeSyncFavoritePlaylist(playlist: SyncFavoritePlaylist): SyncFavoritePlaylist {
+        return playlist.copy(
+            songs = if (playlist.isDeleted) {
+                emptyList()
+            } else {
+                playlist.songs.mapNotNull { sanitizeSyncSong(it) }
+            },
+            trackCount = if (playlist.isDeleted) 0 else playlist.trackCount
+        )
+    }
+
+    private fun sanitizeRecentPlay(play: SyncRecentPlay): SyncRecentPlay? {
+        val sanitizedSong = sanitizeSyncSong(play.song) ?: return null
+        return play.copy(songId = sanitizedSong.id, song = sanitizedSong)
+    }
+
+    private fun sanitizeSyncSong(song: SyncSong): SyncSong? {
+        val localizedContext = LanguageManager.applyLanguage(appContext)
+        if (LocalSongSupport.isLocalSong(song.album, song.mediaUri, song.albumId, localizedContext)) {
+            return null
+        }
+        return song.copy(mediaUri = LocalSongSupport.sanitizeMediaUriForSync(song.mediaUri))
+    }
+
     private fun hasDataChanged(remote: SyncData, merged: SyncData): Boolean {
-        // 比较歌单数量
         if (remote.playlists.size != merged.playlists.size) return true
 
-        // 比较每个歌单的详细信息
         val remotePlaylistMap = remote.playlists.associateBy { it.id }
         for (mergedPlaylist in merged.playlists) {
-            val remotePlaylist = remotePlaylistMap[mergedPlaylist.id]
-            if (remotePlaylist == null) return true
-
-            // 检查歌单名称
+            val remotePlaylist = remotePlaylistMap[mergedPlaylist.id] ?: return true
             if (remotePlaylist.name != mergedPlaylist.name) return true
-
-            // 检查歌曲数量
             if (remotePlaylist.songs.size != mergedPlaylist.songs.size) return true
-
-            // 检查歌曲顺序（比较歌曲ID序列）
-            val remoteSongIds = remotePlaylist.songs.map { it.id }
-            val mergedSongIds = mergedPlaylist.songs.map { it.id }
-            if (remoteSongIds != mergedSongIds) return true
-        }
-
-        // 比较收藏歌单数量
-        if (remote.favoritePlaylists.size != merged.favoritePlaylists.size) return true
-
-        // 比较收藏歌单内容（检查ID和来源）
-        val remoteFavoriteKeys = remote.favoritePlaylists.map { "${it.id}_${it.source}" }.toSet()
-        val mergedFavoriteKeys = merged.favoritePlaylists.map { "${it.id}_${it.source}" }.toSet()
-        if (remoteFavoriteKeys != mergedFavoriteKeys) return true
-
-        // 比较播放历史内容（比较前50条，平衡检测准确性和上传频率）
-        val remoteRecent = remote.recentPlays.take(50)
-        val mergedRecent = merged.recentPlays.take(50)
-
-        // 先比较数量
-        if (remoteRecent.size != mergedRecent.size) {
-            NPLogger.d(TAG, "Play history count changed: remote=${remoteRecent.size}, merged=${mergedRecent.size}")
-            return true
-        }
-
-        // 比较每条播放记录的ID和播放时间
-        for (i in remoteRecent.indices) {
-            val remotePlay = remoteRecent[i]
-            val mergedPlay = mergedRecent[i]
-            if (remotePlay.songId != mergedPlay.songId || remotePlay.playedAt != mergedPlay.playedAt) {
-                NPLogger.d(TAG, "Play history content changed at index $i: remote=(${remotePlay.songId},${remotePlay.playedAt}), merged=(${mergedPlay.songId},${mergedPlay.playedAt})")
-                return true
+            if (remotePlaylist.songs.map { it.identity() } != mergedPlaylist.songs.map { it.identity() }) return true
+            for (i in remotePlaylist.songs.indices) {
+                val remoteSong = remotePlaylist.songs[i]
+                val mergedSong = mergedPlaylist.songs[i]
+                if (!sameSongMetadata(remoteSong, mergedSong)) return true
             }
         }
 
-        NPLogger.d(TAG, "No play history changes detected (checked ${remoteRecent.size} entries)")
+        if (remote.favoritePlaylists.size != merged.favoritePlaylists.size) return true
+        val remoteFavoriteMap = remote.favoritePlaylists.associateBy { "${it.id}_${it.source}" }
+        val mergedFavoriteMap = merged.favoritePlaylists.associateBy { "${it.id}_${it.source}" }
+        if (remoteFavoriteMap.keys != mergedFavoriteMap.keys) return true
+        remoteFavoriteMap.forEach { (key, remoteFavorite) ->
+            val mergedFavorite = mergedFavoriteMap[key] ?: return true
+            if (remoteFavorite.isDeleted != mergedFavorite.isDeleted) return true
+            if (remoteFavorite.modifiedAt != mergedFavorite.modifiedAt) return true
+            if (remoteFavorite.trackCount != mergedFavorite.trackCount) return true
+            if (remoteFavorite.songs.map { it.identity() } != mergedFavorite.songs.map { it.identity() }) return true
+            for (i in remoteFavorite.songs.indices) {
+                val remoteSong = remoteFavorite.songs[i]
+                val mergedSong = mergedFavorite.songs[i]
+                if (!sameSongMetadata(remoteSong, mergedSong)) return true
+            }
+        }
+
+        val remoteRecent = remote.recentPlays.take(50)
+        val mergedRecent = merged.recentPlays.take(50)
+        if (remoteRecent.size != mergedRecent.size) return true
+        for (i in remoteRecent.indices) {
+            if (remoteRecent[i].song.identity() != mergedRecent[i].song.identity()) return true
+            if (!sameSongMetadata(remoteRecent[i].song, mergedRecent[i].song)) return true
+            if (remoteRecent[i].playedAt != mergedRecent[i].playedAt) return true
+        }
         return false
     }
 
-    /**
-     * 上传本地数据到GitHub
-     */
+    private fun sameSongMetadata(a: SyncSong, b: SyncSong): Boolean {
+        return a.name == b.name &&
+            a.artist == b.artist &&
+            a.album == b.album &&
+            a.albumId == b.albumId &&
+            a.durationMs == b.durationMs &&
+            a.coverUrl == b.coverUrl &&
+            a.mediaUri == b.mediaUri &&
+            a.matchedLyric == b.matchedLyric &&
+            a.matchedTranslatedLyric == b.matchedTranslatedLyric &&
+            a.matchedLyricSource == b.matchedLyricSource &&
+            a.matchedSongId == b.matchedSongId &&
+            a.userLyricOffsetMs == b.userLyricOffsetMs &&
+            a.customCoverUrl == b.customCoverUrl &&
+            a.customName == b.customName &&
+            a.customArtist == b.customArtist &&
+            a.originalName == b.originalName &&
+            a.originalArtist == b.originalArtist &&
+            a.originalCoverUrl == b.originalCoverUrl &&
+            a.originalLyric == b.originalLyric &&
+            a.originalTranslatedLyric == b.originalTranslatedLyric
+    }
+
     private suspend fun uploadLocalData(
         apiClient: GitHubApiClient,
         owner: String,
@@ -756,36 +800,42 @@ class GitHubSyncManager(private val context: Context) {
         sha: String?,
         fileName: String
     ): Result<String> {
-        val localizedContext = LanguageManager.applyLanguage(context)
-        // 根据省流模式选择序列化方式
+        val localizedContext = LanguageManager.applyLanguage(appContext)
         val useDataSaver = storage.isDataSaverMode()
         val content = SyncDataSerializer.serialize(data, useDataSaver)
-
-        // 记录数据大小
-        val dataSize = SyncDataSerializer.getDataSize(data, useDataSaver)
-        NPLogger.d(TAG, "Upload data size: $dataSize bytes (DataSaver: $useDataSaver, File: $fileName)")
+        NPLogger.d(
+            TAG,
+            "Upload data size: ${SyncDataSerializer.getDataSize(data, useDataSaver)} bytes (DataSaver: $useDataSaver, File: $fileName)"
+        )
 
         val uploadResult = apiClient.updateFileContent(owner, repo, content, sha, fileName)
-
         return if (uploadResult.isSuccess) {
-            val newSha = uploadResult.getOrNull() ?: ""
-            Result.success(newSha)
+            Result.success(uploadResult.getOrNull().orEmpty())
         } else {
-            Result.failure(uploadResult.exceptionOrNull() ?: Exception(localizedContext.getString(R.string.sync_upload_failed)))
+            Result.failure(
+                uploadResult.exceptionOrNull()
+                    ?: Exception(localizedContext.getString(R.string.sync_upload_failed))
+            )
         }
     }
 
-    /**
-     * 合并结果
-     */
+    private fun getDeviceId(): String {
+        return storage.getOrCreateDeviceId()
+    }
+
+    private fun getDeviceName(): String {
+        return try {
+            "${Build.MANUFACTURER} ${Build.MODEL}"
+        } catch (_: Exception) {
+            "Unknown Device"
+        }
+    }
+
     private data class MergeResult(
         val mergedData: SyncData,
         val syncResult: SyncResult
     )
 
-    /**
-     * 歌单合并结果
-     */
     private data class PlaylistMergeResult(
         val playlist: SyncPlaylist,
         val hasConflict: Boolean,

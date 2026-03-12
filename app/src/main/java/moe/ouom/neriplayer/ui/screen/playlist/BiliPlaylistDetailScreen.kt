@@ -1,4 +1,4 @@
-﻿package moe.ouom.neriplayer.ui.screen.playlist
+package moe.ouom.neriplayer.ui.screen.playlist
 
 /*
  * NeriPlayer - A unified Android player for streaming music and videos from multiple online platforms.
@@ -35,11 +35,13 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.PlaylistAdd
+import androidx.compose.material.icons.automirrored.outlined.PlaylistPlay
 import androidx.compose.material.icons.filled.CheckBox
 import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
 import androidx.compose.material.icons.filled.Close
@@ -74,6 +76,7 @@ import kotlinx.coroutines.launch
 import moe.ouom.neriplayer.R
 import moe.ouom.neriplayer.core.api.bili.BiliClient
 import moe.ouom.neriplayer.core.di.AppContainer
+import moe.ouom.neriplayer.data.LocalFilesPlaylist
 import moe.ouom.neriplayer.data.LocalPlaylistRepository
 import moe.ouom.neriplayer.ui.LocalMiniPlayerHeight
 import moe.ouom.neriplayer.ui.viewmodel.tab.BiliPlaylist
@@ -82,6 +85,7 @@ import moe.ouom.neriplayer.ui.viewmodel.playlist.BiliVideoItem
 import moe.ouom.neriplayer.ui.viewmodel.playlist.SongItem
 import moe.ouom.neriplayer.ui.viewmodel.DownloadManagerViewModel
 import moe.ouom.neriplayer.util.HapticIconButton
+import moe.ouom.neriplayer.util.HapticFloatingActionButton
 import moe.ouom.neriplayer.util.HapticTextButton
 import moe.ouom.neriplayer.util.NPLogger
 import moe.ouom.neriplayer.util.formatDurationSec
@@ -91,6 +95,7 @@ import moe.ouom.neriplayer.core.player.AudioDownloadManager
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
+import androidx.compose.runtime.saveable.rememberSaveable
 import moe.ouom.neriplayer.core.download.GlobalDownloadManager
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -112,6 +117,8 @@ fun BiliPlaylistDetailScreen(
         }
     )
     val ui by vm.uiState.collectAsState()
+    val currentSong by PlayerManager.currentSongFlow.collectAsState()
+    val isPlaying by PlayerManager.isPlayingFlow.collectAsState()
     // 使用Unit作为key，确保每次进入都重新加载最新数据
     LaunchedEffect(Unit) { vm.start(playlist) }
 
@@ -190,6 +197,7 @@ fun BiliPlaylistDetailScreen(
             modifier = Modifier.fillMaxSize(),
             color = Color.Transparent
         ) {
+            val miniPlayerHeight = LocalMiniPlayerHeight.current
             Column {
                 if (!selectionMode) {
                     TopAppBar(
@@ -290,12 +298,18 @@ fun BiliPlaylistDetailScreen(
                     .fillMaxSize()
                     .windowInsetsPadding(WindowInsets.navigationBars)
                 ) {
-                    val miniPlayerHeight = LocalMiniPlayerHeight.current
+                    val listState = rememberSaveable(playlist.mediaId, saver = LazyListState.Saver) {
+                        LazyListState(firstVisibleItemIndex = 0, firstVisibleItemScrollOffset = 0)
+                    }
+                    val activeSong = currentSong
+                    val currentVideoIndex = displayedVideos.indexOfFirst { video ->
+                        activeSong?.album?.startsWith(PlayerManager.BILI_SOURCE_TAG) == true &&
+                            activeSong.id == video.id
+                    }
 
                     LazyColumn(
-                        contentPadding = PaddingValues(
-                            bottom = 24.dp + miniPlayerHeight
-                        ),
+                        state = listState,
+                        contentPadding = PaddingValues(bottom = 24.dp + miniPlayerHeight),
                         modifier = Modifier.fillMaxSize()
                     ) {
                         item {
@@ -345,6 +359,11 @@ fun BiliPlaylistDetailScreen(
                                     VideoRow(
                                         index = index + 1,
                                         video = item,
+                                        isCurrentSong = activeSong?.album?.startsWith(PlayerManager.BILI_SOURCE_TAG) == true &&
+                                            activeSong.id == item.id,
+                                        animatePlayingIndicator = activeSong?.album?.startsWith(PlayerManager.BILI_SOURCE_TAG) == true &&
+                                            activeSong.id == item.id &&
+                                            isPlaying,
                                         selectionMode = selectionMode,
                                         selected = selectedIds.contains(item.bvid),
                                         onToggleSelect = { toggleSelect(item.bvid) },
@@ -378,6 +397,24 @@ fun BiliPlaylistDetailScreen(
                             }
                         }
                     }
+
+                    if (currentVideoIndex >= 0) {
+                        HapticFloatingActionButton(
+                            onClick = {
+                                scope.launch {
+                                    listState.animateScrollToItem(currentVideoIndex + 1)
+                                }
+                            },
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(bottom = 16.dp + miniPlayerHeight, end = 16.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Outlined.PlaylistPlay,
+                                contentDescription = stringResource(R.string.cd_locate_playing)
+                            )
+                        }
+                    }
                 }
             }
 
@@ -391,7 +428,9 @@ fun BiliPlaylistDetailScreen(
                         Spacer(Modifier.height(8.dp))
 
                         LazyColumn {
-                            itemsIndexed(allLocalPlaylists) { _, pl ->
+                            itemsIndexed(
+                                allLocalPlaylists.filterNot { LocalFilesPlaylist.isSystemPlaylist(it, context) }
+                            ) { _, pl ->
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -817,6 +856,8 @@ private fun Header(playlist: BiliPlaylist, headerData: BiliPlaylist?) {
 private fun VideoRow(
     index: Int,
     video: BiliVideoItem,
+    isCurrentSong: Boolean,
+    animatePlayingIndicator: Boolean,
     selectionMode: Boolean,
     selected: Boolean,
     onToggleSelect: () -> Unit,
@@ -885,11 +926,18 @@ private fun VideoRow(
             )
         }
         Spacer(Modifier.width(8.dp))
-        Text(
-            text = formatDurationSec(video.durationSec),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+        if (isCurrentSong) {
+            PlayingIndicator(
+                color = MaterialTheme.colorScheme.primary,
+                animate = animatePlayingIndicator
+            )
+        } else {
+            Text(
+                text = formatDurationSec(video.durationSec),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
         
         // 更多操作菜单
         if (!selectionMode) {

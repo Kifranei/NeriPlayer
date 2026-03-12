@@ -31,7 +31,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import moe.ouom.neriplayer.R
 import moe.ouom.neriplayer.core.api.bili.BiliClient
+import moe.ouom.neriplayer.core.api.bili.buildBiliPartSong
 import moe.ouom.neriplayer.core.player.PlayerManager
 import moe.ouom.neriplayer.core.player.PlayerManager.biliClient
 import moe.ouom.neriplayer.core.player.PlayerManager.neteaseClient
@@ -95,6 +97,7 @@ data class ExploreUiState(
 )
 
 class ExploreViewModel(application: Application) : AndroidViewModel(application) {
+    private val app = application
     private val neteaseRepo = NeteaseCookieRepository(application)
 
     private val _uiState = MutableStateFlow(ExploreUiState())
@@ -148,7 +151,10 @@ class ExploreViewModel(application: Application) : AndroidViewModel(application)
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(
                     searching = false,
-                    searchError = "Bilibili search failed: ${e.message}",  // Localized in UI
+                    searchError = app.getString(
+                        R.string.error_bilibili_search,
+                        e.message ?: app.getString(R.string.github_sync_failed_message)
+                    ),
                     searchResults = emptyList()
                 )
             }
@@ -180,7 +186,10 @@ class ExploreViewModel(application: Application) : AndroidViewModel(application)
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(
                     loading = false,
-                    error = "Load playlist failed: ${e.message}"  // Localized in UI
+                    error = app.getString(
+                        R.string.error_load_playlist,
+                        e.message ?: app.getString(R.string.github_sync_failed_message)
+                    )
                 )
             }
         }
@@ -221,7 +230,10 @@ class ExploreViewModel(application: Application) : AndroidViewModel(application)
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(
                     searching = false,
-                    searchError = "Netease search failed: ${e.message}",  // Localized in UI
+                    searchError = app.getString(
+                        R.string.error_netease_search,
+                        e.message ?: app.getString(R.string.github_sync_failed_message)
+                    ),
                     searchResults = emptyList()
                 )
             }
@@ -266,15 +278,7 @@ class ExploreViewModel(application: Application) : AndroidViewModel(application)
      * @return 转换后的 SongItem
      */
     fun toSongItem(page: BiliClient.VideoPage, basicInfo: BiliClient.VideoBasicInfo, coverUrl: String): SongItem {
-        return SongItem(
-            id = basicInfo.aid * 10000 + page.page, // 使用 avid 和 page 组合成唯一 ID
-            name = page.part, // 直接使用分P的标题作为歌曲名
-            artist = basicInfo.ownerName,
-            album = PlayerManager.BILI_SOURCE_TAG,
-            albumId = 0L,
-            durationMs = page.durationSec * 1000L,
-            coverUrl = coverUrl
-        )
+        return buildBiliPartSong(page, basicInfo, coverUrl)
     }
 }
 

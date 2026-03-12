@@ -62,6 +62,7 @@ data class SongItem(
     val albumId: Long,
     val durationMs: Long,
     val coverUrl: String?,
+    val mediaUri: String? = null,
     val matchedLyric: String? = null,
     val matchedTranslatedLyric: String? = null,
     val matchedLyricSource: MusicPlatform? = null,
@@ -74,7 +75,9 @@ data class SongItem(
     val originalArtist: String? = null,
     val originalCoverUrl: String? = null,
     val originalLyric: String? = null,
-    val originalTranslatedLyric: String? = null
+    val originalTranslatedLyric: String? = null,
+    val localFileName: String? = null,
+    val localFilePath: String? = null
 ) : Parcelable
 
 data class PlaylistDetailUiState(

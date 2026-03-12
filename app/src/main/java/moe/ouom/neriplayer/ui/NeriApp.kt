@@ -23,10 +23,17 @@
  * Created: 2025/8/8
  */
 
+import android.app.Activity
 import android.app.Application
 import android.content.Intent
+import android.graphics.Bitmap
 import android.graphics.drawable.BitmapDrawable
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
+import android.view.PixelCopy
+import android.view.View
+import android.view.ViewTreeObserver
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.EaseInOutCubic
@@ -46,6 +53,8 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
@@ -66,6 +75,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -75,12 +85,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -101,16 +115,22 @@ import dev.chrisbanes.haze.HazeStyle
 import dev.chrisbanes.haze.haze
 import dev.chrisbanes.haze.hazeChild
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import moe.ouom.neriplayer.core.di.AppContainer
 import moe.ouom.neriplayer.core.player.AudioPlayerService
 import moe.ouom.neriplayer.core.player.AudioReactive
 import moe.ouom.neriplayer.core.player.PlayerManager
 import moe.ouom.neriplayer.data.ThemeDefaults
+import moe.ouom.neriplayer.data.ThemePreferenceSnapshot
+import moe.ouom.neriplayer.data.displayCoverUrl
 import moe.ouom.neriplayer.navigation.Destinations
 import moe.ouom.neriplayer.ui.component.NeriBottomBar
 import moe.ouom.neriplayer.ui.component.NeriMiniPlayer
+import moe.ouom.neriplayer.ui.component.ThemeRevealOverlay
 import moe.ouom.neriplayer.ui.screen.DownloadManagerScreen
 import moe.ouom.neriplayer.ui.screen.DownloadProgressScreen
 import moe.ouom.neriplayer.ui.screen.NowPlayingScreen
@@ -132,9 +152,12 @@ import moe.ouom.neriplayer.ui.theme.NeriTheme
 import moe.ouom.neriplayer.ui.view.CoverBlurBackground
 import moe.ouom.neriplayer.ui.view.HyperBackground
 import moe.ouom.neriplayer.ui.viewmodel.debug.LogViewerScreen
+import moe.ouom.neriplayer.ui.viewmodel.playlist.BiliVideoItem
+import moe.ouom.neriplayer.ui.viewmodel.playlist.SongItem
 import moe.ouom.neriplayer.ui.viewmodel.tab.NeteaseAlbum
 import moe.ouom.neriplayer.ui.viewmodel.tab.BiliPlaylist
 import moe.ouom.neriplayer.ui.viewmodel.tab.NeteasePlaylist
+import moe.ouom.neriplayer.core.api.bili.BiliClient
 import moe.ouom.neriplayer.util.ExceptionHandler
 import moe.ouom.neriplayer.util.NPLogger
 import moe.ouom.neriplayer.util.syncHapticFeedbackSetting
@@ -144,6 +167,12 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import moe.ouom.neriplayer.ui.screen.RecentScreen
 import moe.ouom.neriplayer.R
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.core.view.drawToBitmap
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import kotlin.coroutines.resume
 
 private fun adjustAccent(base: Color, isDark: Boolean): Color {
     val r = (base.red * 255).toInt().coerceIn(0, 255)
@@ -176,6 +205,97 @@ private fun adjustAccent(base: Color, isDark: Boolean): Color {
     return Color(mixed)
 }
 
+private suspend fun captureThemeRevealSnapshot(
+    activity: Activity?,
+    fallbackView: View
+): ImageBitmap? {
+    val windowBitmap = activity?.let { currentActivity ->
+        suspendCancellableCoroutine<Bitmap?> { continuation ->
+            val decorView = currentActivity.window.decorView
+            if (decorView.width <= 0 || decorView.height <= 0) {
+                continuation.resume(null)
+                return@suspendCancellableCoroutine
+            }
+
+            val bitmap = Bitmap.createBitmap(
+                decorView.width,
+                decorView.height,
+                Bitmap.Config.ARGB_8888
+            )
+
+            PixelCopy.request(
+                currentActivity.window,
+                bitmap,
+                { result ->
+                    continuation.resume(if (result == PixelCopy.SUCCESS) bitmap else null)
+                },
+                Handler(Looper.getMainLooper())
+            )
+        }
+    }
+
+    return windowBitmap?.asImageBitmap() ?: captureThemeRevealFallbackSnapshot(fallbackView)
+}
+
+private suspend fun captureThemeRevealFallbackSnapshot(view: View): ImageBitmap? {
+    return withContext(Dispatchers.Main.immediate) {
+        runCatching {
+            if (view.width > 0 && view.height > 0) {
+                view.drawToBitmap().asImageBitmap()
+            } else {
+                null
+            }
+        }.getOrNull()
+    }
+}
+
+private suspend fun awaitNextDraw(view: View) {
+    if (!view.isAttachedToWindow || view.width <= 0 || view.height <= 0) {
+        return
+    }
+
+    withTimeoutOrNull(120L) {
+        suspendCancellableCoroutine<Unit> { continuation ->
+            val observer = view.viewTreeObserver
+            var handled = false
+            val drawListener = object : ViewTreeObserver.OnDrawListener {
+                override fun onDraw() {
+                    if (handled) return
+                    handled = true
+                    view.post {
+                        if (observer.isAlive) {
+                            observer.removeOnDrawListener(this)
+                        }
+                        if (continuation.isActive) {
+                            continuation.resume(Unit)
+                        }
+                    }
+                }
+            }
+
+            observer.addOnDrawListener(drawListener)
+            continuation.invokeOnCancellation {
+                if (handled) {
+                    return@invokeOnCancellation
+                }
+                handled = true
+                view.post {
+                    if (observer.isAlive) {
+                        observer.removeOnDrawListener(drawListener)
+                    }
+                }
+            }
+            view.invalidate()
+        }
+    }
+}
+
+private suspend fun awaitStableDraw(view: View) {
+    repeat(2) {
+        awaitNextDraw(view)
+    }
+}
+
 /**
  * 根据封面提取播放界面强调色
  */
@@ -187,10 +307,10 @@ private fun NowPlayingAccentBackdrop(
     onAccentChanged: (String?) -> Unit = {}
 ) {
     val context = LocalContext.current
-    val fallback = MaterialTheme.colorScheme.background
-    var target by remember(coverUrl) { mutableStateOf<Color?>(null) }
+    val fallback = if (isDark) Color(0xFF121212) else Color(0xFFF5F5F5)
+    var target by remember { mutableStateOf<Color?>(null) }
 
-    LaunchedEffect(coverUrl) {
+    LaunchedEffect(coverUrl, isDark) {
         if (coverUrl.isNullOrEmpty()) {
             target = null
             onAccentChanged(null)
@@ -204,7 +324,7 @@ private fun NowPlayingAccentBackdrop(
 
         val result = withContext(Dispatchers.IO) { loader.execute(req) }
         val bmp = (result as? SuccessResult)?.drawable.let { it as? BitmapDrawable }?.bitmap
-        target = bmp?.let {
+        val nextTarget = bmp?.let {
             val p = Palette.from(it).clearFilters().generate()
             val rgb = p.getVibrantColor(
                 p.getMutedColor(
@@ -212,6 +332,9 @@ private fun NowPlayingAccentBackdrop(
                 )
             )
             adjustAccent(Color(rgb), isDark)
+        }
+        if (nextTarget != null) {
+            target = nextTarget
         }
     }
 
@@ -257,15 +380,23 @@ private fun NowPlayingAccentBackdrop(
 
 @Composable
 fun NeriApp(
+    initialThemeSnapshot: ThemePreferenceSnapshot = ThemePreferenceSnapshot(),
     onIsDarkChanged: (Boolean) -> Unit = {}
 ) {
     val context = LocalContext.current
+    val rootView = LocalView.current
     val fallbackPrimary = MaterialTheme.colorScheme.primary.toArgb()
     val repo = remember { AppContainer.settingsRepo }
 
-    val followSystemDark by repo.followSystemDarkFlow.collectAsState(initial = true)
-    val dynamicColorEnabled by repo.dynamicColorFlow.collectAsState(initial = true)
-    val forceDark by repo.forceDarkFlow.collectAsState(initial = false)
+    val storedFollowSystemDark by repo.followSystemDarkFlow.collectAsState(
+        initial = initialThemeSnapshot.followSystemDark
+    )
+    val dynamicColorEnabled by repo.dynamicColorFlow.collectAsState(
+        initial = initialThemeSnapshot.dynamicColor
+    )
+    val storedForceDark by repo.forceDarkFlow.collectAsState(
+        initial = initialThemeSnapshot.forceDark
+    )
     var showNowPlaying by rememberSaveable { mutableStateOf(false) }
     val devModeEnabled by repo.devModeEnabledFlow.collectAsState(initial = false)
     val themeSeedColor by repo.themeSeedColorFlow.collectAsState(initial = ThemeDefaults.DEFAULT_SEED_COLOR_HEX)
@@ -279,15 +410,47 @@ fun NeriApp(
     val backgroundImageBlur by repo.backgroundImageBlurFlow.collectAsState(initial = 10f)
     val backgroundImageAlpha by repo.backgroundImageAlphaFlow.collectAsState(initial = 0.3f)
     val hapticFeedbackEnabled by repo.hapticFeedbackEnabledFlow.collectAsState(initial = true)
+    val showCoverSourceBadge by repo.showCoverSourceBadgeFlow.collectAsState(initial = true)
+    val silentGitHubSyncFailure by repo.silentGitHubSyncFailureFlow.collectAsState(initial = false)
     val showLyricTranslation by repo.showLyricTranslationFlow.collectAsState(initial = true)
     val lyriconEnabled by repo.lyriconEnabledFlow.collectAsState(initial = true)
     val lyriconTranslationEnabled by repo.lyriconTranslationEnabledFlow.collectAsState(initial = true)
     val nowPlayingDynamicBackground by repo.nowPlayingDynamicBackgroundFlow.collectAsState(initial = false)
     val maxCacheSizeBytes by repo.maxCacheSizeBytesFlow.collectAsState(initial = 1024L * 1024 * 1024)
-    val hazeState = remember { HazeState() }
+    var pendingFollowSystemDark by remember { mutableStateOf<Boolean?>(null) }
+    var pendingForceDark by remember { mutableStateOf<Boolean?>(null) }
+    var themeRevealSnapshot by remember { mutableStateOf<ImageBitmap?>(null) }
+    var themeRevealOriginWindow by remember { mutableStateOf<Offset?>(null) }
+    var themeRevealStartRadiusPx by remember { mutableStateOf(0f) }
+    var themeRevealFallbackColorArgb by remember { mutableStateOf<Int?>(null) }
+    var themeRevealCaptureInFlight by remember { mutableStateOf(false) }
+    var themeRevealCaptureJob by remember { mutableStateOf<Job?>(null) }
+    var themeRevealCaptureToken by remember { mutableStateOf(0) }
+    val lifecycleOwner = LocalLifecycleOwner.current
 
-    var coverSeedHex by remember { mutableStateOf<String?>(null) }   // 形如 "RRGGBB"
+    val followSystemDark = pendingFollowSystemDark ?: storedFollowSystemDark
+    val forceDark = pendingForceDark ?: storedForceDark
+
+    val clearThemeRevealVisualState = {
+        pendingFollowSystemDark = null
+        pendingForceDark = null
+        themeRevealSnapshot = null
+        themeRevealOriginWindow = null
+        themeRevealStartRadiusPx = 0f
+        themeRevealFallbackColorArgb = null
+    }
+    val clearThemeRevealState = {
+        themeRevealCaptureToken += 1
+        themeRevealCaptureJob?.cancel()
+        themeRevealCaptureJob = null
+        themeRevealCaptureInFlight = false
+        clearThemeRevealVisualState()
+    }
+
+    // 缓存当前封面的取色结果，避免开关动态取色时先闪到默认种子色。
+    var coverSeedHex by remember { mutableStateOf<String?>(null) }
     val currentSong by PlayerManager.currentSongFlow.collectAsState()
+    val displayCoverUrl = currentSong?.displayCoverUrl()?.takeIf { it.isNotBlank() }
 
     LaunchedEffect(Unit) {
         val initialCacheSize = repo.maxCacheSizeBytesFlow.first()
@@ -303,13 +466,20 @@ fun NeriApp(
             }
     }
 
-
-    LaunchedEffect(currentSong?.coverUrl, dynamicColorEnabled, fallbackPrimary) {
-        if (!dynamicColorEnabled) {
-            coverSeedHex = null
-            return@LaunchedEffect
+    LaunchedEffect(storedFollowSystemDark, pendingFollowSystemDark) {
+        if (pendingFollowSystemDark != null && pendingFollowSystemDark == storedFollowSystemDark) {
+            pendingFollowSystemDark = null
         }
-        val url = currentSong?.coverUrl
+    }
+
+    LaunchedEffect(storedForceDark, pendingForceDark) {
+        if (pendingForceDark != null && pendingForceDark == storedForceDark) {
+            pendingForceDark = null
+        }
+    }
+
+    LaunchedEffect(displayCoverUrl, fallbackPrimary) {
+        val url = displayCoverUrl
         if (url.isNullOrBlank()) {
             coverSeedHex = null
             return@LaunchedEffect
@@ -320,7 +490,7 @@ fun NeriApp(
         val result = withContext(Dispatchers.IO) { loader.execute(req) }
         val bmp = (result as? SuccessResult)?.drawable.let { it as? BitmapDrawable }?.bitmap
 
-        coverSeedHex = bmp?.let { bitmap ->
+        val extractedSeedHex = bmp?.let { bitmap ->
             val p = Palette.from(bitmap).clearFilters().generate()
             val base = p.getVibrantColor(
                 p.getMutedColor(
@@ -332,6 +502,10 @@ fun NeriApp(
             val b = base and 0xFF
             String.format("%02X%02X%02X", r, g, b)
         }
+
+        if (extractedSeedHex != null) {
+            coverSeedHex = extractedSeedHex
+        }
     }
 
     // 同步触感反馈设置
@@ -340,7 +514,8 @@ fun NeriApp(
     }
 
     val defaultDensity = LocalDensity.current
-    var miniPlayerHeightPx by remember { mutableStateOf(0) }
+    var miniPlayerHeightPx by remember { mutableIntStateOf(0) }
+    var bottomBarHeightPx by remember { mutableIntStateOf(0) }
 
     val finalDensity = remember(defaultDensity, uiDensityScale) {
         Density(
@@ -354,6 +529,8 @@ fun NeriApp(
         followSystemDark -> isSystemInDarkTheme()
         else -> false
     }
+    val hazeState = remember { HazeState() }
+
     LaunchedEffect(Unit) {
         // 确保 PlayerManager 使用正确的缓存大小初始化
         // 由于 initialize() 是幂等的，如果已经初始化过，这个调用不会改变设置
@@ -371,15 +548,146 @@ fun NeriApp(
         }
     }
 
-    LaunchedEffect(isDark) { onIsDarkChanged(isDark) }
-
     val scope = rememberCoroutineScope()
     val preferredQuality by repo.audioQualityFlow.collectAsState(initial = "exhigh")
     val biliPreferredQuality by repo.biliAudioQualityFlow.collectAsState(initial = "high")
+    val currentThemeBackgroundArgb = MaterialTheme.colorScheme.background.toArgb()
+    val themeRevealActive =
+        themeRevealOriginWindow != null &&
+            themeRevealFallbackColorArgb != null
+
+    LaunchedEffect(isDark, themeRevealActive, themeRevealCaptureInFlight) {
+        if (!themeRevealActive && !themeRevealCaptureInFlight) {
+            onIsDarkChanged(isDark)
+        }
+    }
+
+    fun requestThemeToggle(originInWindow: Offset, startRadiusPx: Float) {
+        if (
+            themeRevealCaptureInFlight ||
+            pendingFollowSystemDark != null ||
+            pendingForceDark != null ||
+            themeRevealOriginWindow != null
+        ) {
+            return
+        }
+
+        val nextDark = !isDark
+        val activity = context as? Activity
+        val captureView = activity?.window?.decorView?.rootView ?: rootView.rootView
+        val captureToken = themeRevealCaptureToken + 1
+        themeRevealCaptureToken = captureToken
+        themeRevealCaptureInFlight = true
+
+        val captureJob = scope.launch {
+            awaitStableDraw(captureView)
+            val snapshot = runCatching {
+                captureThemeRevealSnapshot(
+                    activity = activity,
+                    fallbackView = captureView
+                )
+            }.getOrNull()
+            val lifecycleActive = lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+            val activityValid = activity == null || (!activity.isFinishing && !activity.isDestroyed)
+            if (themeRevealCaptureToken != captureToken || !lifecycleActive || !activityValid) {
+                if (themeRevealCaptureToken == captureToken) {
+                    themeRevealCaptureJob = null
+                    themeRevealCaptureInFlight = false
+                }
+                return@launch
+            }
+
+            clearThemeRevealVisualState()
+            if (snapshot != null) {
+                themeRevealSnapshot = snapshot
+                themeRevealFallbackColorArgb = currentThemeBackgroundArgb
+                themeRevealOriginWindow = originInWindow
+                themeRevealStartRadiusPx = startRadiusPx.coerceAtLeast(1f)
+            }
+            try {
+                pendingFollowSystemDark = false
+                pendingForceDark = nextDark
+                repo.setFollowSystemDark(false)
+                repo.setForceDark(nextDark)
+            } finally {
+                if (themeRevealCaptureToken == captureToken) {
+                    themeRevealCaptureJob = null
+                    themeRevealCaptureInFlight = false
+                }
+            }
+        }
+        themeRevealCaptureJob = captureJob
+    }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (
+                event == Lifecycle.Event.ON_PAUSE ||
+                event == Lifecycle.Event.ON_STOP ||
+                event == Lifecycle.Event.ON_DESTROY
+            ) {
+                clearThemeRevealState()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
+    LaunchedEffect(rootView, backgroundImageUri) {
+        clearThemeRevealState()
+    }
+
+    fun playSongsAndOpenNowPlaying(songs: List<SongItem>, index: Int) {
+        showNowPlaying = true
+        ContextCompat.startForegroundService(
+            context,
+            Intent(context, AudioPlayerService::class.java).apply {
+                action = AudioPlayerService.ACTION_PLAY
+                putParcelableArrayListExtra("playlist", ArrayList(songs))
+                putExtra("index", index)
+            }
+        )
+    }
+
+    fun ensureAudioServiceStarted() {
+        ContextCompat.startForegroundService(
+            context,
+            Intent(context, AudioPlayerService::class.java).apply {
+                action = AudioPlayerService.ACTION_SYNC
+            }
+        )
+    }
+
+    fun playBiliAudioAndOpenNowPlaying(videos: List<BiliVideoItem>, index: Int) {
+        showNowPlaying = true
+        NPLogger.d("NERI-App", "Playing audio from Bili video: ${videos[index].title}")
+        PlayerManager.playBiliVideoAsAudio(videos, index)
+        ensureAudioServiceStarted()
+    }
+
+    fun playBiliPartsAndOpenNowPlaying(
+        videoInfo: BiliClient.VideoBasicInfo,
+        index: Int,
+        coverUrl: String
+    ) {
+        showNowPlaying = true
+        NPLogger.d("NERI-App", "Playing parts from Bili video: ${videoInfo.title}")
+        PlayerManager.playBiliVideoParts(videoInfo, index, coverUrl)
+        ensureAudioServiceStarted()
+    }
 
     CompositionLocalProvider(LocalDensity provides finalDensity) {
-        val effectiveSeedHex = coverSeedHex ?: themeSeedColor
-        val useSystemDynamic = dynamicColorEnabled && coverSeedHex == null
+        val currentCoverUrl = displayCoverUrl
+        val activeCoverSeedHex = if (currentCoverUrl == null) null else coverSeedHex
+        val effectiveSeedHex = if (dynamicColorEnabled) {
+            activeCoverSeedHex ?: themeSeedColor
+        } else {
+            themeSeedColor
+        }
+        val useSystemDynamic =
+            dynamicColorEnabled && activeCoverSeedHex == null && currentCoverUrl == null
 
         NeriTheme(
             followSystemDark = followSystemDark,
@@ -427,12 +735,27 @@ fun NeriApp(
                 val currentSong by PlayerManager.currentSongFlow.collectAsState()
                 val isMiniPlayerVisible = currentSong != null && !showNowPlaying
                 val isPlaying by PlayerManager.isPlayingFlow.collectAsState()
-
-                val miniPlayerHeightDp = if (isMiniPlayerVisible) {
+                val measuredMiniPlayerHeightDp = if (miniPlayerHeightPx > 0) {
                     with(finalDensity) { miniPlayerHeightPx.toDp() }
-                } else 0.dp
+                } else {
+                    0.dp
+                }
+                val reservedMiniPlayerHeightDp = when {
+                    currentSong == null -> 0.dp
+                    measuredMiniPlayerHeightDp > 0.dp -> measuredMiniPlayerHeightDp
+                    else -> 56.dp
+                }
+                val visibleMiniPlayerHeightDp = if (isMiniPlayerVisible) {
+                    measuredMiniPlayerHeightDp
+                } else {
+                    0.dp
+                }
+                val showLibraryMiniPlayerBridge =
+                    isMiniPlayerVisible &&
+                        currentRoute == Destinations.Library.route &&
+                        visibleMiniPlayerHeightDp > 0.dp
 
-                CompositionLocalProvider(LocalMiniPlayerHeight provides miniPlayerHeightDp) {
+                CompositionLocalProvider(LocalMiniPlayerHeight provides reservedMiniPlayerHeightDp) {
                     Scaffold(
                         containerColor = containerColor,
                         contentColor = MaterialTheme.colorScheme.onSurface,
@@ -447,13 +770,34 @@ fun NeriApp(
                             )
                         },
                         bottomBar = {
-                            AnimatedVisibility(
-                                visible = !showNowPlaying,
-                                enter = slideInVertically { it },
-                                exit = slideOutVertically { it }
+                            val bottomBarVisibilityProgress by animateFloatAsState(
+                                targetValue = if (showNowPlaying) 0f else 1f,
+                                animationSpec = tween(
+                                    durationMillis = if (showNowPlaying) 220 else 280,
+                                    easing = FastOutSlowInEasing
+                                ),
+                                label = "bottom_bar_visibility"
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clipToBounds()
                             ) {
                                 NeriBottomBar(
-                                    modifier = Modifier.hazeChild(state = hazeState),
+                                    modifier = Modifier
+                                        .align(Alignment.BottomCenter)
+                                        .onSizeChanged { size ->
+                                            if (size.height > 0) {
+                                                bottomBarHeightPx = size.height
+                                            }
+                                        }
+                                        .graphicsLayer {
+                                            translationY =
+                                                (1f - bottomBarVisibilityProgress) * bottomBarHeightPx
+                                                    .toFloat()
+                                            alpha = bottomBarVisibilityProgress
+                                        }
+                                        .hazeChild(state = hazeState),
                                     selectAlpha = selectAlpha,
                                     items = buildList {
                                         add(Destinations.Home to Icons.Outlined.Home)
@@ -532,20 +876,7 @@ fun NeriApp(
                                     }
                                 ) {
                                     HomeHostScreen(
-                                        onSongClick = { songs, index ->
-                                            ContextCompat.startForegroundService(
-                                                context,
-                                                Intent(context, AudioPlayerService::class.java).apply {
-                                                    action = AudioPlayerService.ACTION_PLAY
-                                                    putParcelableArrayListExtra(
-                                                        "playlist",
-                                                        ArrayList(songs)
-                                                    )
-                                                    putExtra("index", index)
-                                                }
-                                            )
-                                            showNowPlaying = true
-                                        }
+                                        onSongClick = ::playSongsAndOpenNowPlaying
                                     )
                                 }
 
@@ -570,17 +901,7 @@ fun NeriApp(
                                     NeteasePlaylistDetailScreen(
                                         playlist = playlist,
                                         onBack = { navController.popBackStack() },
-                                        onSongClick = { songs, index ->
-                                            ContextCompat.startForegroundService(
-                                                context,
-                                                Intent(context, AudioPlayerService::class.java).apply {
-                                                    action = AudioPlayerService.ACTION_PLAY
-                                                    putParcelableArrayListExtra("playlist", ArrayList(songs))
-                                                    putExtra("index", index)
-                                                }
-                                            )
-                                            showNowPlaying = true
-                                        }
+                                        onSongClick = ::playSongsAndOpenNowPlaying
                                     )
                                 }
 
@@ -605,17 +926,7 @@ fun NeriApp(
                                     NeteaseAlbumDetailScreen(
                                         album = album,
                                         onBack = { navController.popBackStack() },
-                                        onSongClick = { songs, index ->
-                                            ContextCompat.startForegroundService(
-                                                context,
-                                                Intent(context, AudioPlayerService::class.java).apply {
-                                                    action = AudioPlayerService.ACTION_PLAY
-                                                    putParcelableArrayListExtra("playlist", ArrayList(songs))
-                                                    putExtra("index", index)
-                                                }
-                                            )
-                                            showNowPlaying = true
-                                        }
+                                        onSongClick = ::playSongsAndOpenNowPlaying
                                     )
                                 }
                                 
@@ -640,16 +951,8 @@ fun NeriApp(
                                     BiliPlaylistDetailScreen(
                                         playlist = playlist,
                                         onBack = { navController.popBackStack() },
-                                        onPlayAudio = { videos, index ->
-                                            NPLogger.d("NERI-App", "Playing audio from Bili video: ${videos[index].title}")
-                                            PlayerManager.playBiliVideoAsAudio(videos, index)
-                                            showNowPlaying = true
-                                        },
-                                        onPlayParts = { videoInfo, index, coverUrl ->
-                                            NPLogger.d("NERI-App", "Playing parts from Bili video: ${videoInfo.title}")
-                                            PlayerManager.playBiliVideoParts(videoInfo, index, coverUrl)
-                                            showNowPlaying = true
-                                        }
+                                        onPlayAudio = ::playBiliAudioAndOpenNowPlaying,
+                                        onPlayParts = ::playBiliPartsAndOpenNowPlaying
                                     )
                                 }
 
@@ -687,21 +990,8 @@ fun NeriApp(
                                     }
                                 ) {
                                     ExploreHostScreen(
-                                        onSongClick = { songs, index ->
-                                            ContextCompat.startForegroundService(
-                                                context,
-                                                Intent(context, AudioPlayerService::class.java).apply {
-                                                    action = AudioPlayerService.ACTION_PLAY
-                                                    putParcelableArrayListExtra("playlist", ArrayList(songs))
-                                                    putExtra("index", index)
-                                                }
-                                            )
-                                            showNowPlaying = true
-                                        },
-                                        onPlayParts = { videoInfo, index, coverUrl ->
-                                            PlayerManager.playBiliVideoParts(videoInfo, index, coverUrl)
-                                            showNowPlaying = true
-                                        }
+                                        onSongClick = ::playSongsAndOpenNowPlaying,
+                                        onPlayParts = ::playBiliPartsAndOpenNowPlaying
                                     )
                                 }
 
@@ -739,21 +1029,8 @@ fun NeriApp(
                                     }
                                 ) {
                                     LibraryHostScreen(
-                                        onSongClick = { songs, index ->
-                                            ContextCompat.startForegroundService(
-                                                context,
-                                                Intent(context, AudioPlayerService::class.java).apply {
-                                                    action = AudioPlayerService.ACTION_PLAY
-                                                    putParcelableArrayListExtra("playlist", ArrayList(songs))
-                                                    putExtra("index", index)
-                                                }
-                                            )
-                                            showNowPlaying = true
-                                        },
-                                        onPlayParts = { videoInfo, index, coverUrl ->
-                                            PlayerManager.playBiliVideoParts(videoInfo, index, coverUrl)
-                                            showNowPlaying = true
-                                        },
+                                        onSongClick = ::playSongsAndOpenNowPlaying,
+                                        onPlayParts = ::playBiliPartsAndOpenNowPlaying,
                                         onOpenRecent = { navController.navigate(Destinations.Recent.route) }
                                     )
                                 }
@@ -777,17 +1054,7 @@ fun NeriApp(
                                         playlistId = id,
                                         onBack = { navController.popBackStack() },
                                         onDeleted = { navController.popBackStack() },
-                                        onSongClick = { songs, index ->
-                                            ContextCompat.startForegroundService(
-                                                context,
-                                                Intent(context, AudioPlayerService::class.java).apply {
-                                                    action = AudioPlayerService.ACTION_PLAY
-                                                    putParcelableArrayListExtra("playlist", ArrayList(songs))
-                                                    putExtra("index", index)
-                                                }
-                                            )
-                                            showNowPlaying = true
-                                        }
+                                        onSongClick = ::playSongsAndOpenNowPlaying
                                     )
                                 }
 
@@ -800,17 +1067,7 @@ fun NeriApp(
                                 ) {
                                     RecentScreen(
                                         onBack = { navController.popBackStack() },
-                                        onSongClick = { songs, index ->
-                                            ContextCompat.startForegroundService(
-                                                context,
-                                                Intent(context, AudioPlayerService::class.java).apply {
-                                                    action = AudioPlayerService.ACTION_PLAY
-                                                    putParcelableArrayListExtra("playlist", ArrayList(songs))
-                                                    putExtra("index", index)
-                                                }
-                                            )
-                                            showNowPlaying = true
-                                        }
+                                        onSongClick = ::playSongsAndOpenNowPlaying
                                     )
                                 }
 
@@ -850,8 +1107,8 @@ fun NeriApp(
                                     SettingsHostScreen(
                                         dynamicColor = dynamicColorEnabled,
                                         onDynamicColorChange = { scope.launch { repo.setDynamicColor(it) } },
-                                        forceDark = forceDark,
-                                        onForceDarkChange = { scope.launch { repo.setForceDark(it) } },
+                                        isDarkTheme = isDark,
+                                        onThemeToggleRequest = ::requestThemeToggle,
                                         preferredQuality = preferredQuality,
                                         onQualityChange = { scope.launch { repo.setAudioQuality(it) } },
                                         biliPreferredQuality = biliPreferredQuality,
@@ -902,6 +1159,14 @@ fun NeriApp(
                                                 syncHapticFeedbackSetting(enabled)
                                             }
                                         },
+                                        showCoverSourceBadge = showCoverSourceBadge,
+                                        onShowCoverSourceBadgeChange = { enabled ->
+                                            scope.launch { repo.setShowCoverSourceBadge(enabled) }
+                                        },
+                                        silentGitHubSyncFailure = silentGitHubSyncFailure,
+                                        onSilentGitHubSyncFailureChange = { enabled ->
+                                            scope.launch { repo.setSilentGitHubSyncFailure(enabled) }
+                                        },
                                         showLyricTranslation = showLyricTranslation,
                                         onShowLyricTranslationChange = { enabled ->
                                             scope.launch { repo.setShowLyricTranslation(enabled) }
@@ -927,7 +1192,8 @@ fun NeriApp(
                                                 val (_, message) = PlayerManager.clearCache(clearAudio, clearImage)
                                                 snackbarHostState.showSnackbar(message)
                                             }
-                                        }
+                                        },
+                                        onBeforeLanguageRestart = clearThemeRevealState
                                     )
                                 }
 
@@ -1057,6 +1323,29 @@ fun NeriApp(
                             }
 
                             AnimatedVisibility(
+                                visible = showLibraryMiniPlayerBridge,
+                                modifier = Modifier.align(Alignment.BottomStart),
+                                enter = fadeIn(animationSpec = tween(durationMillis = 180)),
+                                exit = fadeOut(animationSpec = tween(durationMillis = 120))
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(visibleMiniPlayerHeightDp + 20.dp)
+                                        .background(
+                                            Brush.verticalGradient(
+                                                colors = listOf(
+                                                    Color.Transparent,
+                                                    MaterialTheme.colorScheme.surface.copy(
+                                                        alpha = if (backgroundImageUri == null) 0.86f else 0.48f
+                                                    )
+                                                )
+                                            )
+                                        )
+                                )
+                            }
+
+                            AnimatedVisibility(
                                 visible = currentSong != null && !showNowPlaying,
                                 modifier = Modifier.align(Alignment.BottomStart),
                                 enter = slideInVertically(
@@ -1077,14 +1366,20 @@ fun NeriApp(
                                 NeriMiniPlayer(
                                     title = currentSong?.name ?: context.getString(R.string.nowplaying_no_playback),
                                     artist = currentSong?.artist ?: "",
-                                    coverUrl = currentSong?.coverUrl,
+                                    coverUrl = currentSong?.displayCoverUrl(),
                                     isPlaying = isPlaying,
                                     onPlayPause = { PlayerManager.togglePlayPause() },
                                     onExpand = { showNowPlaying = true },
-                                    onHeightChanged = { heightInPixels -> miniPlayerHeightPx = heightInPixels },
+                                    onHeightChanged = { heightInPixels ->
+                                        if (heightInPixels > 0) {
+                                            miniPlayerHeightPx = heightInPixels
+                                        }
+                                    },
                                     hazeState = hazeState,
+                                    enableHaze = true
                                 )
                             }
+
                         }
                     }
                 }
@@ -1100,8 +1395,15 @@ fun NeriApp(
                         targetOffsetY = { fullHeight -> fullHeight }
                     ) + fadeOut(animationSpec = tween(durationMillis = 150))
                 ) {
-                    val useSystemDynamic = dynamicColorEnabled && (coverSeedHex == null || currentSong == null)
-                    val effectiveSeedHex = coverSeedHex ?: themeSeedColor
+                    val currentCoverUrl = currentSong?.displayCoverUrl()?.takeIf { it.isNotBlank() }
+                    val activeCoverSeedHex = if (currentCoverUrl == null) null else coverSeedHex
+                    val effectiveSeedHex = if (dynamicColorEnabled) {
+                        activeCoverSeedHex ?: themeSeedColor
+                    } else {
+                        themeSeedColor
+                    }
+                    val useSystemDynamic =
+                        dynamicColorEnabled && activeCoverSeedHex == null && currentCoverUrl == null
 
                     NeriTheme(
                         followSystemDark = false,
@@ -1112,11 +1414,13 @@ fun NeriApp(
                         BackHandler { showNowPlaying = false }
 
                         val currentSongNP by PlayerManager.currentSongFlow.collectAsState()
+                        val nowPlayingCoverUrl =
+                            currentSongNP?.displayCoverUrl()?.takeIf { it.isNotBlank() }
 
                         Box(Modifier.fillMaxSize()) {
                             // 背景固定按暗色逻辑渲染
                             NowPlayingAccentBackdrop(
-                                coverUrl = currentSongNP?.coverUrl,
+                                coverUrl = nowPlayingCoverUrl,
                                 isDark = true,
                                 modifier = Modifier.fillMaxSize()
                             )
@@ -1127,31 +1431,49 @@ fun NeriApp(
                                         .matchParentSize()
                                         .graphicsLayer { alpha = 0.80f },
                                     isDark = true,
-                                    coverUrl = currentSongNP?.coverUrl
+                                    coverUrl = nowPlayingCoverUrl
                                 )
                             } else {
                                 CoverBlurBackground(
-                                    coverUrl = currentSongNP?.coverUrl,
+                                    coverUrl = nowPlayingCoverUrl,
                                     modifier = Modifier.matchParentSize()
                                 )
                             }
 
-                            NowPlayingScreen(
-                                onNavigateUp = { showNowPlaying = false },
-                                onEnterAlbum = { album ->
-                                    val json = Uri.encode(Gson().toJson(album))
-                                    navController.navigate("netease_album_detail/$json")
-                                },
-                                lyricBlurEnabled = lyricBlurEnabled,
-                                lyricBlurAmount = lyricBlurAmount,
-                                lyricFontScale = lyricFontScale,
-                                onLyricFontScaleChange = { scale ->
-                                    scope.launch { repo.setLyricFontScale(scale) }
-                                },
-                                showLyricTranslation = showLyricTranslation
-                            )
+                            CompositionLocalProvider(LocalMiniPlayerHeight provides 0.dp) {
+                                NowPlayingScreen(
+                                    onNavigateUp = { showNowPlaying = false },
+                                    onEnterAlbum = { album ->
+                                        val json = Uri.encode(Gson().toJson(album))
+                                        navController.navigate("netease_album_detail/$json")
+                                    },
+                                    lyricBlurEnabled = lyricBlurEnabled,
+                                    lyricBlurAmount = lyricBlurAmount,
+                                    lyricFontScale = lyricFontScale,
+                                    onLyricFontScaleChange = { scale ->
+                                        scope.launch { repo.setLyricFontScale(scale) }
+                                    },
+                                    showCoverSourceBadge = showCoverSourceBadge,
+                                    showLyricTranslation = showLyricTranslation
+                                )
+                            }
                         }
                     }
+                }
+
+                val revealOrigin = themeRevealOriginWindow
+                val revealFallbackColor = themeRevealFallbackColorArgb?.let(::Color)
+                if (revealOrigin != null && revealFallbackColor != null) {
+                    ThemeRevealOverlay(
+                        snapshot = themeRevealSnapshot,
+                        fallbackColor = revealFallbackColor,
+                        originInWindow = revealOrigin,
+                        startRadiusPx = themeRevealStartRadiusPx,
+                        legacySnapshotDim = true,
+                        modifier = Modifier.fillMaxSize(),
+                        durationMillis = 720,
+                        onFinished = clearThemeRevealState
+                    )
                 }
             }
         }

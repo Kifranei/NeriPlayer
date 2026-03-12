@@ -29,6 +29,8 @@ import android.renderscript.Allocation
 import android.renderscript.Element
 import android.renderscript.RenderScript
 import android.renderscript.ScriptIntrinsicBlur
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -38,9 +40,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.core.net.toUri
 import coil.compose.AsyncImage
 import coil.request.CachePolicy
+import moe.ouom.neriplayer.R
 import coil.request.ImageRequest
 import coil.size.Size
 import coil.transform.Transformation
+import androidx.compose.material3.MaterialTheme
 import androidx.core.graphics.createBitmap
 
 
@@ -53,10 +57,11 @@ fun CustomBackground(
 ) {
     if (imageUri != null) {
         val context = LocalContext.current
+        val backgroundBaseColor = MaterialTheme.colorScheme.background
 
         val imageRequest = ImageRequest.Builder(context)
             .data(imageUri.toUri())
-            .crossfade(true)
+            .crossfade(false)
             .diskCachePolicy(CachePolicy.ENABLED)
             .memoryCachePolicy(CachePolicy.ENABLED)
             .networkCachePolicy(CachePolicy.ENABLED)
@@ -69,14 +74,21 @@ fun CustomBackground(
             )
             .build()
 
-        AsyncImage(
-            model = imageRequest,
-            contentDescription = "App Background",
-            contentScale = ContentScale.Crop,
-            modifier = modifier
-                .fillMaxSize()
-                .alpha(alpha)
-        )
+        Box(modifier = modifier.fillMaxSize()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(backgroundBaseColor)
+            )
+            AsyncImage(
+                model = imageRequest,
+                contentDescription = context.getString(R.string.cd_app_background),
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .alpha(alpha)
+            )
+        }
     }
 }
 

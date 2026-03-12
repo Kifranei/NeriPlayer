@@ -97,6 +97,11 @@ android {
         buildConfig = true
     }
 
+    bundle {
+        language {
+            enableSplit = false
+        }
+    }
 
 }
 
@@ -165,6 +170,7 @@ dependencies {
     implementation(libs.androidx.foundation)
 
     testImplementation(libs.junit)
+    testImplementation(libs.mockito.core)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     implementation(libs.androidx.animation)
@@ -173,7 +179,7 @@ dependencies {
 
     implementation(libs.dec)
     implementation(libs.okhttp)
-    implementation("io.github.proify.lyricon:provider:0.1.66")
+    implementation("io.github.proify.lyricon:provider:0.1.68")
 
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.serialization.protobuf)
@@ -201,6 +207,7 @@ dependencies {
 
     // Security - 加密存储
     implementation(libs.androidx.security.crypto)
+    implementation(libs.taglib)
 
     // WorkManager - 后台同步
     implementation(libs.androidx.work.runtime.ktx)

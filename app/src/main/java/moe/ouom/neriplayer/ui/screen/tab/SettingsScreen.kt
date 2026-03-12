@@ -32,6 +32,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.result.contract.ActivityResultContracts.CreateDocument
 import androidx.activity.result.contract.ActivityResultContracts.OpenDocument
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.EaseInCubic
@@ -48,6 +50,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -57,6 +60,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -79,6 +83,7 @@ import androidx.compose.material.icons.outlined.Brightness4
 import androidx.compose.material.icons.outlined.ColorLens
 import androidx.compose.material.icons.outlined.DarkMode
 import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.LightMode
 import androidx.compose.material.icons.outlined.Router
 import androidx.compose.material.icons.outlined.Subtitles
 import androidx.compose.material.icons.outlined.Timer
@@ -132,21 +137,27 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.graphics.ColorUtils
 import androidx.core.graphics.toColorInt
@@ -155,11 +166,13 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.StateFlow
 import moe.ouom.neriplayer.BuildConfig
 import moe.ouom.neriplayer.R
 import moe.ouom.neriplayer.activity.NeteaseWebLoginActivity
 import moe.ouom.neriplayer.data.ThemeDefaults
+import moe.ouom.neriplayer.data.BackgroundImageStorage
 import moe.ouom.neriplayer.ui.LocalMiniPlayerHeight
 import moe.ouom.neriplayer.ui.viewmodel.debug.NeteaseAuthEvent
 import moe.ouom.neriplayer.ui.viewmodel.debug.NeteaseAuthViewModel
@@ -172,7 +185,6 @@ import moe.ouom.neriplayer.ui.viewmodel.auth.BiliAuthViewModel
 import moe.ouom.neriplayer.util.HapticButton
 import moe.ouom.neriplayer.util.HapticIconButton
 import moe.ouom.neriplayer.util.HapticTextButton
-import moe.ouom.neriplayer.util.NightModeHelper
 import moe.ouom.neriplayer.util.convertTimestampToDate
 import moe.ouom.neriplayer.util.formatFileSize
 import java.io.File
@@ -197,6 +209,12 @@ private fun maskCookieValue(value: String): String {
         value.length <= 4 -> "***"
         else -> "${value.take(2)}***${value.takeLast(2)}"
     }
+}
+
+private val SettingsItemShape = RoundedCornerShape(18.dp)
+
+private fun Modifier.settingsItemClickable(onClick: () -> Unit): Modifier {
+    return clip(SettingsItemShape).clickable(onClick = onClick)
 }
 
 /** 可复用的折叠区头部 */
@@ -228,7 +246,7 @@ private fun ExpandableHeader(
                 tint = MaterialTheme.colorScheme.onSurface
             )
         },
-        modifier = Modifier.clickable { onToggle() },
+        modifier = Modifier.settingsItemClickable { onToggle() },
         colors = ListItemDefaults.colors(containerColor = Color.Transparent)
     )
 }
@@ -237,7 +255,7 @@ private fun ExpandableHeader(
 @Composable
 private fun ThemeSeedListItem(seedColorHex: String, onClick: () -> Unit) {
     ListItem(
-        modifier = Modifier.clickable(onClick = onClick),
+        modifier = Modifier.settingsItemClickable(onClick = onClick),
         leadingContent = {
             Icon(
                 imageVector = Icons.Outlined.ColorLens,
@@ -263,7 +281,7 @@ private fun ThemeSeedListItem(seedColorHex: String, onClick: () -> Unit) {
 @Composable
 private fun UiScaleListItem(currentScale: Float, onClick: () -> Unit) {
     ListItem(
-        modifier = Modifier.clickable(onClick = onClick),
+        modifier = Modifier.settingsItemClickable(onClick = onClick),
         leadingContent = {
             Icon(
                 imageVector = Icons.Outlined.ZoomInMap,
@@ -278,6 +296,93 @@ private fun UiScaleListItem(currentScale: Float, onClick: () -> Unit) {
     )
 }
 
+@Composable
+private fun ThemeModeActionButton(
+    isDarkTheme: Boolean,
+    onToggleRequest: (Offset, Float) -> Unit
+) {
+    var centerInWindow by remember { mutableStateOf<Offset?>(null) }
+    var revealStartRadiusPx by remember { mutableFloatStateOf(18f) }
+    val contentDescription = if (isDarkTheme) {
+        stringResource(R.string.settings_theme_toggle_light)
+    } else {
+        stringResource(R.string.settings_theme_toggle_dark)
+    }
+    val iconProgress by animateFloatAsState(
+        targetValue = if (isDarkTheme) 1f else 0f,
+        animationSpec = tween(durationMillis = 620, easing = FastOutSlowInEasing),
+        label = "theme_toggle_icon_progress"
+    )
+    val containerColor by animateColorAsState(
+        targetValue = if (isDarkTheme) {
+            MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.8f)
+        } else {
+            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f)
+        },
+        animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
+        label = "theme_toggle_container_color"
+    )
+
+    Box(
+        modifier = Modifier
+            .size(36.dp)
+            .clip(CircleShape)
+            .background(containerColor)
+    ) {
+        HapticIconButton(
+            onClick = {
+                centerInWindow?.let { onToggleRequest(it, revealStartRadiusPx) }
+            },
+            modifier = Modifier
+                .fillMaxSize()
+                .onGloballyPositioned { coordinates ->
+                    revealStartRadiusPx = maxOf(
+                        coordinates.size.width,
+                        coordinates.size.height
+                    ) / 2f
+                    centerInWindow = coordinates.positionInWindow() + Offset(
+                        x = coordinates.size.width / 2f,
+                        y = coordinates.size.height / 2f
+                    )
+                }
+        ) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.DarkMode,
+                    contentDescription = contentDescription,
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier
+                        .size(20.dp)
+                        .graphicsLayer {
+                            alpha = 1f - iconProgress
+                            val scale = 0.56f + (1f - iconProgress) * 0.44f
+                            scaleX = scale
+                            scaleY = scale
+                            rotationZ = -56f * iconProgress
+                        }
+                )
+                Icon(
+                    imageVector = Icons.Outlined.LightMode,
+                    contentDescription = contentDescription,
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier
+                        .size(20.dp)
+                        .graphicsLayer {
+                            alpha = iconProgress
+                            val scale = 0.56f + iconProgress * 0.44f
+                            scaleX = scale
+                            scaleY = scale
+                            rotationZ = 56f * (1f - iconProgress)
+                        }
+                )
+            }
+        }
+    }
+}
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -285,8 +390,8 @@ fun SettingsScreen(
     listState: androidx.compose.foundation.lazy.LazyListState,
     dynamicColor: Boolean,
     onDynamicColorChange: (Boolean) -> Unit,
-    forceDark: Boolean,
-    onForceDarkChange: (Boolean) -> Unit,
+    isDarkTheme: Boolean,
+    onThemeToggleRequest: (Offset, Float) -> Unit,
     preferredQuality: String,
     onQualityChange: (String) -> Unit,
     biliPreferredQuality: String,
@@ -316,6 +421,10 @@ fun SettingsScreen(
     onBackgroundImageAlphaChange: (Float) -> Unit,
     hapticFeedbackEnabled: Boolean,
     onHapticFeedbackEnabledChange: (Boolean) -> Unit,
+    showCoverSourceBadge: Boolean,
+    onShowCoverSourceBadgeChange: (Boolean) -> Unit,
+    silentGitHubSyncFailure: Boolean,
+    onSilentGitHubSyncFailureChange: (Boolean) -> Unit,
     showLyricTranslation: Boolean,
     onShowLyricTranslationChange: (Boolean) -> Unit,
     lyriconEnabled: Boolean,
@@ -328,9 +437,11 @@ fun SettingsScreen(
     maxCacheSizeBytes: Long,
     onMaxCacheSizeBytesChange: (Long) -> Unit,
     onClearCacheClick: (clearAudio: Boolean, clearImage: Boolean) -> Unit,
+    onBeforeLanguageRestart: () -> Unit = {},
 ) {
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
 
     // 登录菜单的状态
     var loginExpanded by remember { mutableStateOf(false) }
@@ -402,10 +513,16 @@ fun SettingsScreen(
         contract = ActivityResultContracts.PickVisualMedia(),
         onResult = { uri ->
             if (uri != null) {
-                // 获取永久访问权限
-                val flag = Intent.FLAG_GRANT_READ_URI_PERMISSION
-                context.contentResolver.takePersistableUriPermission(uri, flag)
-                onBackgroundImageChange(uri)
+                scope.launch {
+                    val importedUri = BackgroundImageStorage.importFromUri(
+                        context = context,
+                        sourceUri = uri,
+                        previousUriString = backgroundImageUri
+                    )
+                    if (importedUri != null) {
+                        onBackgroundImageChange(importedUri)
+                    }
+                }
             }
         }
     )
@@ -457,7 +574,7 @@ fun SettingsScreen(
             "higher" -> context.getString(R.string.settings_audio_quality_higher)
             "exhigh" -> context.getString(R.string.settings_audio_quality_exhigh)
             "lossless" -> context.getString(R.string.settings_audio_quality_lossless)
-            "hires" -> "Hi-Res"
+            "hires" -> context.getString(R.string.quality_hires)
             "jyeffect" -> context.getString(R.string.settings_audio_quality_jyeffect)
             "sky" -> context.getString(R.string.settings_audio_quality_sky)
             "jymaster" -> context.getString(R.string.settings_audio_quality_jymaster)
@@ -468,7 +585,7 @@ fun SettingsScreen(
     val biliQualityLabel = remember(biliPreferredQuality) {
         when (biliPreferredQuality) {
             "dolby"   -> context.getString(R.string.settings_audio_quality_dolby)
-            "hires"   -> "Hi-Res"
+            "hires"   -> context.getString(R.string.quality_hires)
             "lossless"-> context.getString(R.string.settings_audio_quality_lossless)
             "high"    -> context.getString(R.string.settings_audio_quality_high)
             "medium"  -> context.getString(R.string.settings_audio_quality_medium)
@@ -524,7 +641,18 @@ fun SettingsScreen(
         contentColor = Color.Transparent,
         topBar = {
             LargeTopAppBar(
-                title = { Text(stringResource(R.string.settings_title)) },
+                title = {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text(stringResource(R.string.settings_title))
+                        ThemeModeActionButton(
+                            isDarkTheme = isDarkTheme,
+                            onToggleRequest = onThemeToggleRequest
+                        )
+                    }
+                },
                 scrollBehavior = scrollBehavior,
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = Color.Transparent,
@@ -579,34 +707,6 @@ fun SettingsScreen(
             }
 
 
-            // 强制深色
-            item {
-                ListItem(
-                    leadingContent = {
-                        Icon(
-                            imageVector = Icons.Outlined.DarkMode,
-                            contentDescription = stringResource(R.string.settings_force_dark),
-                            tint = MaterialTheme.colorScheme.onSurface
-                        )
-                    },
-                    headlineContent = { Text(stringResource(R.string.settings_force_dark)) },
-                    supportingContent = { Text(stringResource(R.string.settings_force_dark_desc)) },
-                    trailingContent = {
-                        Switch(
-                            checked = forceDark,
-                            onCheckedChange = { checked ->
-                                onForceDarkChange(checked)
-                                NightModeHelper.applyNightMode(
-                                    followSystemDark = false,
-                                    forceDark = checked
-                                )
-                            }
-                        )
-                    },
-                    colors = ListItemDefaults.colors(containerColor = Color.Transparent)
-                )
-            }
-
             item {
                 // 触感反馈
                 ListItem(
@@ -629,7 +729,7 @@ fun SettingsScreen(
 
             // 语言设置
             item {
-                LanguageSettingItem()
+                LanguageSettingItem(onBeforeRestart = onBeforeLanguageRestart)
             }
 
             // 登录三方平台
@@ -670,7 +770,7 @@ fun SettingsScreen(
                             },
                             headlineContent = { Text(stringResource(R.string.platform_bilibili)) },
                             supportingContent = { Text(stringResource(R.string.login_browser)) },
-                            modifier = Modifier.clickable {
+                            modifier = Modifier.settingsItemClickable {
                                 inlineMsg = null
                                 biliWebLoginLauncher.launch(
                                     Intent(context, moe.ouom.neriplayer.activity.BiliWebLoginActivity::class.java)
@@ -685,14 +785,14 @@ fun SettingsScreen(
                             leadingContent = {
                                 Icon(
                                     painter = painterResource(id = R.drawable.ic_youtube),
-                                    contentDescription = "YouTube",
+                                    contentDescription = stringResource(R.string.common_youtube),
                                     modifier = Modifier.size(24.dp),
                                     tint = MaterialTheme.colorScheme.onSurface
                                 )
                             },
-                            headlineContent = { Text("YouTube") },
+                            headlineContent = { Text(stringResource(R.string.common_youtube)) },
                             supportingContent = { Text(stringResource(R.string.common_not_implemented)) },
-                            modifier = Modifier.clickable { },
+                            modifier = Modifier.settingsItemClickable { },
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent)
                         )
 
@@ -708,7 +808,7 @@ fun SettingsScreen(
                             },
                             headlineContent = { Text(stringResource(R.string.platform_netease)) },
                             supportingContent = { Text(stringResource(R.string.login_methods)) },
-                            modifier = Modifier.clickable {
+                            modifier = Modifier.settingsItemClickable {
                                 inlineMsg = null
                                 showNeteaseSheet = true
                             },
@@ -727,7 +827,7 @@ fun SettingsScreen(
                             },
                             headlineContent = { Text(stringResource(R.string.settings_qq_music)) },
                             supportingContent = { Text(stringResource(R.string.common_coming_soon)) },
-                            modifier = Modifier.clickable { },
+                            modifier = Modifier.settingsItemClickable { },
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent)
                         )
                     }
@@ -807,6 +907,26 @@ fun SettingsScreen(
                                 }
                             )
                         }
+
+                        ListItem(
+                            leadingContent = {
+                                Icon(
+                                    imageVector = Icons.Outlined.Info,
+                                    contentDescription = stringResource(R.string.settings_cover_source_badge),
+                                    modifier = Modifier.size(24.dp),
+                                    tint = MaterialTheme.colorScheme.onSurface
+                                )
+                            },
+                            headlineContent = { Text(stringResource(R.string.settings_cover_source_badge)) },
+                            supportingContent = { Text(stringResource(R.string.settings_cover_source_badge_desc)) },
+                            trailingContent = {
+                                Switch(
+                                    checked = showCoverSourceBadge,
+                                    onCheckedChange = onShowCoverSourceBadgeChange
+                                )
+                            },
+                            colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                        )
 
                         ListItem(
                             leadingContent = {
@@ -935,7 +1055,7 @@ fun SettingsScreen(
 
                         // 选择背景图
                         ListItem(
-                            modifier = Modifier.clickable {
+                            modifier = Modifier.settingsItemClickable {
                                 photoPickerLauncher.launch(
                                     PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
                                 )
@@ -955,9 +1075,17 @@ fun SettingsScreen(
 
                         // 展开区域
                         AnimatedVisibility(visible = backgroundImageUri != null) {
-                            Column {
-                                // 清除背景图按钮
-                                TextButton(onClick = { onBackgroundImageChange(null) }) {
+                                Column {
+                                    // 清除背景图按钮
+                                TextButton(onClick = {
+                                    scope.launch {
+                                        BackgroundImageStorage.deleteManagedBackground(
+                                            context = context,
+                                            uriString = backgroundImageUri
+                                        )
+                                        onBackgroundImageChange(null)
+                                    }
+                                }) {
                                     Text(stringResource(R.string.background_clear))
                                 }
 
@@ -1077,8 +1205,10 @@ fun SettingsScreen(
                                 )
                             },
                             headlineContent = { Text(stringResource(R.string.quality_netease_default)) },
-                            supportingContent = { Text("$qualityLabel - $preferredQuality") },
-                            modifier = Modifier.clickable { showQualityDialog = true },
+                            supportingContent = {
+                                Text(stringResource(R.string.common_label_value_format, qualityLabel, preferredQuality))
+                            },
+                            modifier = Modifier.settingsItemClickable { showQualityDialog = true },
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent)
                         )
 
@@ -1092,8 +1222,10 @@ fun SettingsScreen(
                                 )
                             },
                             headlineContent = { Text(stringResource(R.string.quality_bili_default)) },
-                            supportingContent = { Text("$biliQualityLabel - $biliPreferredQuality") },
-                            modifier = Modifier.clickable { showBiliQualityDialog = true },
+                            supportingContent = {
+                                Text(stringResource(R.string.common_label_value_format, biliQualityLabel, biliPreferredQuality))
+                            },
+                            modifier = Modifier.settingsItemClickable { showBiliQualityDialog = true },
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent)
                         )
                     }
@@ -1134,9 +1266,9 @@ fun SettingsScreen(
 
                                 // 显示文本格式化：超过 1024MB 显示为 GB
                                 val displaySize = if (sliderValue >= 1024) {
-                                    String.format(Locale.US, "%.1f GB", sliderValue / 1024)
+                                    context.getString(R.string.settings_cache_size_gb, sliderValue / 1024)
                                 } else {
-                                    "${sliderValue.toInt()} MB"
+                                    context.getString(R.string.settings_cache_size_mb, sliderValue.toInt())
                                 }
 
                                 Column {
@@ -1285,7 +1417,7 @@ fun SettingsScreen(
                                         Text(stringResource(R.string.action_cancel), color = MaterialTheme.colorScheme.error)
                                     }
                                 },
-                                modifier = Modifier.clickable {
+                                modifier = Modifier.settingsItemClickable {
                                     onNavigateToDownloadManager()
                                 },
                                 colors = ListItemDefaults.colors(containerColor = Color.Transparent)
@@ -1321,7 +1453,7 @@ fun SettingsScreen(
                                 },
                                 headlineContent = { Text(stringResource(R.string.download_title)) },
                                 supportingContent = { Text(stringResource(R.string.download_desc)) },
-                                modifier = Modifier.clickable {
+                                modifier = Modifier.settingsItemClickable {
                                     onNavigateToDownloadManager()
                                 },
                                 colors = ListItemDefaults.colors(containerColor = Color.Transparent)
@@ -1383,7 +1515,7 @@ fun SettingsScreen(
                             },
                             headlineContent = { Text(stringResource(R.string.playlist_export)) },
                             supportingContent = { Text(stringResource(R.string.playlist_export_desc)) },
-                            modifier = Modifier.clickable {
+                            modifier = Modifier.settingsItemClickable {
                                 if (!backupRestoreUiState.isExporting) {
                                     exportPlaylistLauncher.launch(backupRestoreVm.generateBackupFileName())
                                 }
@@ -1402,7 +1534,7 @@ fun SettingsScreen(
                             },
                             headlineContent = { Text(stringResource(R.string.playlist_import)) },
                             supportingContent = { Text(stringResource(R.string.playlist_import_desc)) },
-                            modifier = Modifier.clickable {
+                            modifier = Modifier.settingsItemClickable {
                                 if (!backupRestoreUiState.isImporting) {
                                     importPlaylistLauncher.launch(arrayOf("*/*"))
                                 }
@@ -1588,7 +1720,7 @@ fun SettingsScreen(
                                 },
                                 headlineContent = { Text(stringResource(R.string.sync_config)) },
                                 supportingContent = { Text(stringResource(R.string.sync_config_desc)) },
-                                modifier = Modifier.clickable {
+                                modifier = Modifier.settingsItemClickable {
                                     showGitHubConfigDialog = true
                                 },
                                 colors = ListItemDefaults.colors(containerColor = Color.Transparent)
@@ -1666,7 +1798,7 @@ fun SettingsScreen(
                                         }
                                     )
                                 },
-                                modifier = Modifier.clickable {
+                                modifier = Modifier.settingsItemClickable {
                                     showPlayHistoryModeDialog = true
                                 },
                                 colors = ListItemDefaults.colors(containerColor = Color.Transparent)
@@ -1745,6 +1877,7 @@ fun SettingsScreen(
 
                             // 省流模式开关
                             var dataSaverMode by remember { mutableStateOf(storage.isDataSaverMode()) }
+                            var pendingDataSaverMode by remember { mutableStateOf<Boolean?>(null) }
 
                             ListItem(
                                 leadingContent = {
@@ -1759,10 +1892,59 @@ fun SettingsScreen(
                                 trailingContent = {
                                     Switch(
                                         checked = dataSaverMode,
-                                        onCheckedChange = {
-                                            dataSaverMode = it
-                                            storage.setDataSaverMode(it)
+                                        onCheckedChange = { enabled ->
+                                            if (enabled != dataSaverMode) {
+                                                pendingDataSaverMode = enabled
+                                            }
                                         }
+                                    )
+                                },
+                                colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                            )
+
+                            if (pendingDataSaverMode != null) {
+                                AlertDialog(
+                                    onDismissRequest = { pendingDataSaverMode = null },
+                                    title = {
+                                        Text(stringResource(R.string.sync_data_saver_warning_title))
+                                    },
+                                    text = {
+                                        Text(stringResource(R.string.sync_data_saver_warning_message))
+                                    },
+                                    confirmButton = {
+                                        HapticTextButton(
+                                            onClick = {
+                                                val enabled = pendingDataSaverMode ?: return@HapticTextButton
+                                                dataSaverMode = enabled
+                                                storage.setDataSaverMode(enabled)
+                                                pendingDataSaverMode = null
+                                            }
+                                        ) {
+                                            Text(stringResource(R.string.sync_data_saver_warning_confirm))
+                                        }
+                                    },
+                                    dismissButton = {
+                                        HapticTextButton(onClick = { pendingDataSaverMode = null }) {
+                                            Text(stringResource(R.string.action_cancel))
+                                        }
+                                    }
+                                )
+                            }
+
+                            ListItem(
+                                leadingContent = {
+                                    Icon(
+                                        Icons.Outlined.Error,
+                                        contentDescription = stringResource(R.string.github_sync_silent_failure),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                },
+                                headlineContent = { Text(stringResource(R.string.github_sync_silent_failure)) },
+                                supportingContent = { Text(stringResource(R.string.github_sync_silent_failure_desc)) },
+                                trailingContent = {
+                                    Switch(
+                                        checked = silentGitHubSyncFailure,
+                                        onCheckedChange = onSilentGitHubSyncFailureChange
                                     )
                                 },
                                 colors = ListItemDefaults.colors(containerColor = Color.Transparent)
@@ -1865,11 +2047,11 @@ fun SettingsScreen(
                     leadingContent = {
                         Icon(
                             imageVector = Icons.Outlined.Verified,
-                            contentDescription = "Build UUID",
+                            contentDescription = stringResource(R.string.settings_build_uuid),
                             tint = MaterialTheme.colorScheme.onSurface
                         )
                     },
-                    headlineContent = { Text("Build UUID", style = MaterialTheme.typography.titleMedium) },
+                    headlineContent = { Text(stringResource(R.string.settings_build_uuid), style = MaterialTheme.typography.titleMedium) },
                     supportingContent = { Text(BuildConfig.BUILD_UUID) },
                     colors = ListItemDefaults.colors(containerColor = Color.Transparent)
                 )
@@ -1887,10 +2069,14 @@ fun SettingsScreen(
                     },
                     headlineContent = { Text(stringResource(R.string.common_version), style = MaterialTheme.typography.titleMedium) },
                     supportingContent = {
-                        val hint = if (!devModeEnabled) "" else "（DEBUG MODE）"
-                        Text("${BuildConfig.VERSION_NAME} $hint")
+                        val suffix = if (devModeEnabled) {
+                            " (${stringResource(R.string.settings_version_debug_suffix)})"
+                        } else {
+                            ""
+                        }
+                        Text("${BuildConfig.VERSION_NAME}$suffix")
                     },
-                    modifier = Modifier.clickable {
+                    modifier = Modifier.settingsItemClickable {
                         if (!devModeEnabled) {
                             versionTapCount++
                             if (versionTapCount >= 7) {
@@ -1928,16 +2114,16 @@ fun SettingsScreen(
                     leadingContent = {
                         Icon(
                             painter = painterResource(id = R.drawable.ic_github),
-                            contentDescription = "GitHub",
+                            contentDescription = stringResource(R.string.common_github),
                             tint = MaterialTheme.colorScheme.onSurface
                         )
                     },
-                    headlineContent = { Text("GitHub") },
-                    supportingContent = { Text("github.com/Kifranei/NeriPlayer") },
-                    modifier = Modifier.clickable {
+                    headlineContent = { Text(stringResource(R.string.common_github)) },
+                    supportingContent = { Text(stringResource(R.string.settings_github_repo_url)) },
+                    modifier = Modifier.settingsItemClickable {
                         val intent = Intent(
                             Intent.ACTION_VIEW,
-                            "https://github.com/Kifranei/NeriPlayer".toUri()
+                            "https://github.com/cwuom/NeriPlayer".toUri()
                         )
                         context.startActivity(intent)
                     },
@@ -1955,7 +2141,7 @@ fun SettingsScreen(
                 Column {
                     val options = listOf(
                         "dolby" to stringResource(R.string.settings_dolby),
-                        "hires" to "Hi-Res",
+                        "hires" to stringResource(R.string.quality_hires),
                         "lossless" to stringResource(R.string.quality_lossless),
                         "high" to stringResource(R.string.settings_audio_quality_high),
                         "medium" to stringResource(R.string.settings_audio_quality_medium),
@@ -1968,12 +2154,12 @@ fun SettingsScreen(
                                 if (level == biliPreferredQuality) {
                                     Icon(
                                         imageVector = Icons.Filled.Check,
-                                        contentDescription = "Selected",
+                                        contentDescription = stringResource(R.string.common_selected),
                                         tint = MaterialTheme.colorScheme.primary
                                     )
                                 }
                             },
-                            modifier = Modifier.clickable {
+                            modifier = Modifier.settingsItemClickable {
                                 onBiliQualityChange(level)
                                 showBiliQualityDialog = false
                             },
@@ -2157,7 +2343,7 @@ fun SettingsScreen(
                         "higher" to stringResource(R.string.quality_high),
                         "exhigh" to stringResource(R.string.quality_very_high),
                         "lossless" to stringResource(R.string.quality_lossless),
-                        "hires" to "Hi-Res",
+                        "hires" to stringResource(R.string.quality_hires),
                         "jyeffect" to stringResource(R.string.quality_hd_surround),
                         "sky" to stringResource(R.string.quality_surround),
                         "jymaster" to stringResource(R.string.quality_hires)
@@ -2169,12 +2355,12 @@ fun SettingsScreen(
                                 if (level == preferredQuality) {
                                     Icon(
                                         imageVector = Icons.Filled.Check,
-                                        contentDescription = "Selected",
+                                        contentDescription = stringResource(R.string.common_selected),
                                         tint = MaterialTheme.colorScheme.primary
                                     )
                                 }
                             },
-                            modifier = Modifier.clickable {
+                            modifier = Modifier.settingsItemClickable {
                                 onQualityChange(level)
                                 showQualityDialog = false
                             },
@@ -2263,8 +2449,8 @@ fun SettingsScreen(
                     OutlinedTextField(
                         value = githubToken,
                         onValueChange = { githubToken = it },
-                        label = { Text("GitHub Token") },
-                        placeholder = { Text("ghp_xxxxxxxxxxxx") },
+                        label = { Text(stringResource(R.string.settings_github_token_label)) },
+                        placeholder = { Text(stringResource(R.string.settings_github_token_placeholder)) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -2322,7 +2508,7 @@ fun SettingsScreen(
                                 value = existingRepoName,
                                 onValueChange = { existingRepoName = it },
                                 label = { Text(stringResource(R.string.sync_repo_full_name)) },
-                                placeholder = { Text("username/repo-name") },
+                                placeholder = { Text(stringResource(R.string.settings_sync_repo_placeholder)) },
                                 singleLine = true,
                                 modifier = Modifier.fillMaxWidth()
                             )
@@ -2573,27 +2759,37 @@ private fun ColorPickerDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.settings_select_color)) },
         text = {
-            FlowRow(
-                modifier = Modifier.fillMaxWidth(),
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 560.dp)
+                    .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 // 色列表
-                FlowRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 220.dp)
+                        .verticalScroll(rememberScrollState())
                 ) {
-                    palette.forEach { hex ->
-                        val isPreset = ThemeDefaults.PRESET_SET.contains(hex.uppercase(Locale.ROOT))
-                        ColorPickerItem(
-                            hex = hex,
-                            isSelected = currentHex.equals(hex, ignoreCase = true),
-                            onClick = {
-                                pickedHex = hex.uppercase(Locale.ROOT)
-                                onColorSelected(hex) // 允许直接使用预设色
-                            },
-                            onRemove = if (!isPreset) { { onRemoveColor(hex) } } else null
-                        )
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        palette.forEach { hex ->
+                            val isPreset = ThemeDefaults.PRESET_SET.contains(hex.uppercase(Locale.ROOT))
+                            ColorPickerItem(
+                                hex = hex,
+                                isSelected = currentHex.equals(hex, ignoreCase = true),
+                                onClick = {
+                                    pickedHex = hex.uppercase(Locale.ROOT)
+                                    onColorSelected(hex) // 允许直接使用预设色
+                                },
+                                onRemove = if (!isPreset) { { onRemoveColor(hex) } } else null
+                            )
+                        }
                     }
                 }
 
@@ -2608,23 +2804,71 @@ private fun ColorPickerDialog(
 
                 // 操作按钮
                 val existsInPalette = palette.any { it.equals(pickedHex, ignoreCase = true) }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    OutlinedButton(
-                        onClick = { onAddColor(pickedHex) },
-                        enabled = !existsInPalette && !ThemeDefaults.PRESET_SET.contains(pickedHex),
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text(stringResource(R.string.settings_add_to_palette))
-                    }
-                    Button(
-                        onClick = { onColorSelected(pickedHex) },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text(stringResource(R.string.settings_apply_color))
+                BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                    val useVerticalButtons = maxWidth < 360.dp
+                    if (useVerticalButtons) {
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = { onAddColor(pickedHex) },
+                                enabled = !existsInPalette && !ThemeDefaults.PRESET_SET.contains(pickedHex),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.settings_add_to_palette),
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Ellipsis,
+                                    fontSize = 13.sp
+                                )
+                            }
+                            Button(
+                                onClick = { onColorSelected(pickedHex) },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.settings_apply_color),
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Ellipsis,
+                                    fontSize = 13.sp
+                                )
+                            }
+                        }
+                    } else {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedButton(
+                                onClick = { onAddColor(pickedHex) },
+                                enabled = !existsInPalette && !ThemeDefaults.PRESET_SET.contains(pickedHex),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.settings_add_to_palette),
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Ellipsis,
+                                    fontSize = 13.sp
+                                )
+                            }
+                            Button(
+                                onClick = { onColorSelected(pickedHex) },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.settings_apply_color),
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Ellipsis,
+                                    fontSize = 13.sp
+                                )
+                            }
+                        }
                     }
                 }
 
@@ -2681,7 +2925,7 @@ private fun ColorPickerItem(
             }
             Icon(
                 imageVector = Icons.Default.Check,
-                contentDescription = "Selected",
+                contentDescription = stringResource(R.string.common_selected),
                 tint = contentColor
             )
         }

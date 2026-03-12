@@ -26,12 +26,15 @@ package moe.ouom.neriplayer.data.github
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
-import android.os.Build
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import androidx.core.app.NotificationCompat
 import androidx.work.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import moe.ouom.neriplayer.R
+import moe.ouom.neriplayer.data.SettingsRepository
 import moe.ouom.neriplayer.util.NPLogger
 import java.util.concurrent.TimeUnit
 
@@ -55,13 +58,15 @@ class GitHubSyncWorker(
          * 调度延迟同步(5秒后执行)
          * @param triggerByUserAction 是否由用户操作触发（如果是，则忽略自动同步开关）
          */
-        fun scheduleDelayedSync(context: Context, triggerByUserAction: Boolean = false) {
-            val constraints = Constraints.Builder()
-                .setRequiredNetworkType(NetworkType.CONNECTED)
-                .build()
-
+        fun scheduleDelayedSync(
+            context: Context,
+            triggerByUserAction: Boolean = false,
+            markMutation: Boolean = false
+        ) {
+            if (markMutation) {
+                SecureTokenStorage(context).markSyncMutation()
+            }
             val syncRequest = OneTimeWorkRequestBuilder<GitHubSyncWorker>()
-                .setConstraints(constraints)
                 .setInitialDelay(5, TimeUnit.SECONDS)
                 .addTag(WORK_NAME)
                 .setInputData(workDataOf("trigger_by_user_action" to triggerByUserAction))
@@ -79,15 +84,10 @@ class GitHubSyncWorker(
          * 调度定期同步(每小时)
          */
         fun schedulePeriodicSync(context: Context) {
-            val constraints = Constraints.Builder()
-                .setRequiredNetworkType(NetworkType.CONNECTED)
-                .build()
-
             val syncRequest = PeriodicWorkRequestBuilder<GitHubSyncWorker>(
                 1, TimeUnit.HOURS,
                 15, TimeUnit.MINUTES // 灵活间隔
             )
-                .setConstraints(constraints)
                 .addTag(PERIODIC_WORK_NAME)
                 .build()
 
@@ -111,12 +111,7 @@ class GitHubSyncWorker(
          * 立即执行同步（无论是否开启自动同步）
          */
         fun syncNow(context: Context) {
-            val constraints = Constraints.Builder()
-                .setRequiredNetworkType(NetworkType.CONNECTED)
-                .build()
-
             val syncRequest = OneTimeWorkRequestBuilder<GitHubSyncWorker>()
-                .setConstraints(constraints)
                 .addTag("sync_now")
                 .setInputData(workDataOf("force_sync" to true))
                 .build()
@@ -126,12 +121,12 @@ class GitHubSyncWorker(
     }
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
+        val forceSync = inputData.getBoolean("force_sync", false)
+        val triggerByUserAction = inputData.getBoolean("trigger_by_user_action", false)
         try {
             NPLogger.d(TAG, "Starting GitHub sync...")
 
             val storage = SecureTokenStorage(applicationContext)
-            val forceSync = inputData.getBoolean("force_sync", false)
-            val triggerByUserAction = inputData.getBoolean("trigger_by_user_action", false)
 
             // 如果是强制同步或用户操作触发，跳过自动同步检查
             if (!forceSync && !triggerByUserAction) {
@@ -147,6 +142,10 @@ class GitHubSyncWorker(
                 NPLogger.d(TAG, "GitHub not configured")
                 return@withContext Result.success()
             }
+            if (!hasValidatedNetwork()) {
+                NPLogger.d(TAG, "No validated network available, retry later")
+                return@withContext Result.retry()
+            }
 
             // 执行同步
             val syncManager = GitHubSyncManager.getInstance(applicationContext)
@@ -158,10 +157,22 @@ class GitHubSyncWorker(
                 Result.success()
             } else {
                 val error = syncResult.exceptionOrNull()
+                if (error is GitHubSyncInProgressException) {
+                    NPLogger.d(TAG, "Sync skipped because another sync is already running")
+                    return@withContext Result.success()
+                }
                 NPLogger.e(TAG, "Sync failed", error)
 
                 // 显示错误通知
-                showErrorNotification(error)
+                if (
+                    shouldShowErrorNotification(
+                        error = error,
+                        forceSync = forceSync,
+                        triggerByUserAction = triggerByUserAction
+                    )
+                ) {
+                    showErrorNotification(error)
+                }
 
                 // Token过期时不重试，其他错误重试
                 if (error is TokenExpiredException) {
@@ -173,9 +184,46 @@ class GitHubSyncWorker(
 
         } catch (e: Exception) {
             NPLogger.e(TAG, "Sync worker error", e)
-            showErrorNotification(e)
+            if (
+                shouldShowErrorNotification(
+                    error = e,
+                    forceSync = forceSync,
+                    triggerByUserAction = triggerByUserAction
+                )
+            ) {
+                showErrorNotification(e)
+            }
             Result.retry()
         }
+    }
+
+    private fun hasValidatedNetwork(): Boolean {
+        val connectivityManager =
+            applicationContext.getSystemService(ConnectivityManager::class.java)
+                ?: return false
+        val activeNetwork = connectivityManager.activeNetwork ?: return false
+        val capabilities = connectivityManager.getNetworkCapabilities(activeNetwork) ?: return false
+        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+    }
+
+    private suspend fun shouldShowErrorNotification(
+        error: Throwable?,
+        forceSync: Boolean = false,
+        triggerByUserAction: Boolean = false
+    ): Boolean {
+        if (error is TokenExpiredException) {
+            return true
+        }
+        if (error is GitHubSyncInProgressException) {
+            return false
+        }
+        if (forceSync || triggerByUserAction) {
+            return true
+        }
+        return !SettingsRepository(applicationContext)
+            .silentGitHubSyncFailureFlow
+            .first()
     }
 
     /**

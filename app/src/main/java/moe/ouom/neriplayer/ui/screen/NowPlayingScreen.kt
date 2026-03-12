@@ -1,28 +1,4 @@
 ﻿package moe.ouom.neriplayer.ui.screen
-
-/*
- * NeriPlayer - A unified Android player for streaming music and videos from multiple online platforms.
- * Copyright (C) 2025-2025 NeriPlayer developers
- * https://github.com/cwuom/NeriPlayer
- *
- * This software is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
- * (at your option) any later version.
- *
- * This software is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
- * See the GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this software.
- * If not, see <https://www.gnu.org/licenses/>.
- *
- * File: moe.ouom.neriplayer.ui.screen/NowPlayingScreen
- * Created: 2025/8/8
- */
-
 import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
@@ -30,36 +6,34 @@ import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.BoundsTransform
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionLayout
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
-import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.background
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -79,14 +53,14 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.PlaylistAdd
 import androidx.compose.material.icons.automirrored.outlined.QueueMusic
-import androidx.compose.material.icons.automirrored.outlined.VolumeUp
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Headset
 import androidx.compose.material.icons.filled.MoreVert
@@ -97,13 +71,14 @@ import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.FormatSize
-import androidx.compose.material.icons.outlined.LibraryMusic
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.LibraryMusic
 import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Repeat
+import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Shuffle
 import androidx.compose.material.icons.outlined.SkipNext
@@ -143,6 +118,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -151,13 +128,15 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
@@ -166,36 +145,47 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.navigation.compose.rememberNavController
 import androidx.media3.common.Player
 import coil.compose.AsyncImage
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import moe.ouom.neriplayer.R
-import moe.ouom.neriplayer.util.offlineCachedImageRequest
 import moe.ouom.neriplayer.core.api.search.MusicPlatform
 import moe.ouom.neriplayer.core.api.search.SongSearchInfo
-import moe.ouom.neriplayer.core.di.AppContainer
 import moe.ouom.neriplayer.core.player.AudioDownloadManager
 import moe.ouom.neriplayer.core.player.PlayerManager
+import moe.ouom.neriplayer.data.FavoritesPlaylist
+import moe.ouom.neriplayer.data.LocalFilesPlaylist
+import moe.ouom.neriplayer.data.LocalMediaSupport
+import moe.ouom.neriplayer.data.isLocalSong
+import moe.ouom.neriplayer.data.sameIdentityAs
 import moe.ouom.neriplayer.ui.LocalMiniPlayerHeight
 import moe.ouom.neriplayer.ui.component.AppleMusicLyric
+import moe.ouom.neriplayer.ui.component.LocalSongDetailsDialog
+import moe.ouom.neriplayer.ui.component.LocalSongSyncConfirmDialog
 import moe.ouom.neriplayer.ui.component.LyricEntry
 import moe.ouom.neriplayer.ui.component.LyricVisualSpec
+import moe.ouom.neriplayer.ui.component.PlaybackSourceBadge
+import moe.ouom.neriplayer.ui.component.PlaybackSourceType
 import moe.ouom.neriplayer.ui.component.SleepTimerDialog
 import moe.ouom.neriplayer.ui.component.WaveformSlider
 import moe.ouom.neriplayer.ui.component.parseNeteaseLrc
 import moe.ouom.neriplayer.ui.component.parseNeteaseYrc
-import moe.ouom.neriplayer.ui.viewmodel.tab.NeteaseAlbum
 import moe.ouom.neriplayer.ui.viewmodel.NowPlayingViewModel
 import moe.ouom.neriplayer.ui.viewmodel.playlist.SongItem
+import moe.ouom.neriplayer.ui.viewmodel.tab.NeteaseAlbum
 import moe.ouom.neriplayer.util.HapticFilledIconButton
 import moe.ouom.neriplayer.util.HapticIconButton
 import moe.ouom.neriplayer.util.HapticTextButton
 import moe.ouom.neriplayer.util.NPLogger
-import moe.ouom.neriplayer.util.SearchManager
 import moe.ouom.neriplayer.util.formatDuration
+import moe.ouom.neriplayer.util.offlineCachedImageRequest
 import kotlin.math.roundToInt
+
+private const val LyricsPageTransitionDurationMs = 300
+private const val CoverSourceBadgeRevealBufferMs = 20
+private const val CoverSourceBadgeRevealDelayMs =
+    LyricsPageTransitionDurationMs + CoverSourceBadgeRevealBufferMs
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class, ExperimentalSharedTransitionApi::class)
 @Composable
@@ -206,6 +196,7 @@ fun NowPlayingScreen(
     lyricBlurAmount: Float,
     lyricFontScale: Float,
     onLyricFontScaleChange: (Float) -> Unit,
+    showCoverSourceBadge: Boolean = true,
     showLyricTranslation: Boolean = true,
 ) {
     val currentSong by PlayerManager.currentSongFlow.collectAsState()
@@ -218,23 +209,37 @@ fun NowPlayingScreen(
 
     // 订阅当前播放链接
     val currentMediaUrl by PlayerManager.currentMediaUrlFlow.collectAsState()
-    val isFromNetease = currentMediaUrl?.contains("music.126.net", ignoreCase = true) == true
-    val isFromBili = currentMediaUrl?.contains("bilivideo.", ignoreCase = true) == true
+    val isFromNeteaseTag =
+        currentSong?.album?.startsWith(PlayerManager.NETEASE_SOURCE_TAG) == true
+    val isFromBiliTag =
+        currentSong?.album?.startsWith(PlayerManager.BILI_SOURCE_TAG) == true
+    val isFromNeteaseUrl = currentMediaUrl?.contains("music.126.net", ignoreCase = true) == true
+    val isFromBiliUrl = currentMediaUrl?.contains("bilivideo.", ignoreCase = true) == true
+    val isFromNetease = isFromNeteaseTag || (!isFromBiliTag && isFromNeteaseUrl)
+    val isFromBili = isFromBiliTag || (!isFromNeteaseTag && isFromBiliUrl)
+    val rawPlaybackSourceType = when {
+        currentSong?.isLocalSong() == true -> PlaybackSourceType.LOCAL
+        isFromNetease -> PlaybackSourceType.NETEASE
+        isFromBili -> PlaybackSourceType.BILIBILI
+        else -> null
+    }
+    val playbackSourceSongKey = currentSong?.let {
+        listOf(it.id.toString(), it.album, it.mediaUri.orEmpty(), it.localFilePath.orEmpty())
+            .joinToString(separator = "|")
+    }
+    var playbackSourceType by remember { mutableStateOf<PlaybackSourceType?>(null) }
 
-    // 歌单&收藏
     val playlists by PlayerManager.playlistsFlow.collectAsState()
+    val context = LocalContext.current
 
     // 点击即切换，回流后撤销覆盖
     var favOverride by remember(currentSong) { mutableStateOf<Boolean?>(null) }
-    val favoritePlaylistName = stringResource(R.string.favorite_my_music)
-    val isFavoriteComputed = remember(currentSong, playlists, favoritePlaylistName) {
-        val song = currentSong
-        if (song == null) {
-            false
-        } else {
-            val fav = playlists.firstOrNull { it.name == "我喜欢的音乐" || it.name == "My Favorite Music" }
-            fav?.songs?.any { it.id == song.id && it.album == song.album } == true
-        }
+    val isFavoriteComputed = remember(currentSong, playlists) {
+        val song = currentSong ?: return@remember false
+        playlists
+            .firstOrNull { FavoritesPlaylist.isSystemPlaylist(it, context) }
+            ?.songs
+            ?.any { it.sameIdentityAs(song) } == true
     }
     val isFavorite = favOverride ?: isFavoriteComputed
 
@@ -245,13 +250,16 @@ fun NowPlayingScreen(
     val queue by PlayerManager.currentQueueFlow.collectAsState()
     val displayedQueue = remember(queue) { queue }
     val currentIndexInDisplay = displayedQueue.indexOfFirst {
-        it.id == currentSong?.id && it.album == currentSong?.album
+        it.sameIdentityAs(currentSong)
     }
 
     var showAddSheet by remember { mutableStateOf(false) }
     var showQueueSheet by remember { mutableStateOf(false) }
     var showLyricsScreen by remember { mutableStateOf(false) }
     var showSleepTimerDialog by remember { mutableStateOf(false) }
+    var showCoverPageSourceBadge by remember { mutableStateOf(false) }
+    var animateCoverPageSourceBadge by remember { mutableStateOf(false) }
+    var previousLyricsScreenState by remember { mutableStateOf(false) }
     var showSongNameMenu by remember { mutableStateOf(false) }
     var showArtistMenu by remember { mutableStateOf(false) }
     val addSheetState = rememberModalBottomSheetState()
@@ -259,6 +267,9 @@ fun NowPlayingScreen(
 
     // Snackbar状态
     val snackbarHostState = remember { SnackbarHostState() }
+    var detailSong by remember { mutableStateOf<SongItem?>(null) }
+    var pendingSyncConfirmAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+    var pendingSyncConfirmLabel by remember { mutableStateOf("") }
 
     val clipboardManager = LocalClipboardManager.current
 
@@ -312,15 +323,62 @@ fun NowPlayingScreen(
 
     LaunchedEffect(Unit) { contentVisible = true }
     LaunchedEffect(currentPosition) { if (!isUserDraggingSlider) sliderPosition = currentPosition.toFloat() }
+    LaunchedEffect(showLyricsScreen, showCoverSourceBadge) {
+        val returningFromLyrics = previousLyricsScreenState && !showLyricsScreen
+        previousLyricsScreenState = showLyricsScreen
+        if (!showCoverSourceBadge) {
+            showCoverPageSourceBadge = false
+            animateCoverPageSourceBadge = false
+            return@LaunchedEffect
+        }
+        if (showLyricsScreen) {
+            showCoverPageSourceBadge = false
+            animateCoverPageSourceBadge = false
+        } else {
+            animateCoverPageSourceBadge = returningFromLyrics
+            if (returningFromLyrics) {
+                delay(CoverSourceBadgeRevealDelayMs.toLong())
+            }
+            showCoverPageSourceBadge = true
+        }
+    }
+    LaunchedEffect(playbackSourceSongKey, rawPlaybackSourceType, showCoverSourceBadge) {
+        when {
+            !showCoverSourceBadge -> playbackSourceType = null
+            rawPlaybackSourceType != null -> playbackSourceType = rawPlaybackSourceType
+            playbackSourceSongKey == null -> playbackSourceType = null
+            else -> {
+                delay(250)
+                playbackSourceType = null
+            }
+        }
+    }
 
     // 当仓库回流或歌曲切换时，撤销本地乐观覆盖，用真实状态对齐
     LaunchedEffect(playlists, currentSong?.id) { favOverride = null }
 
+    fun launchWithLocalSyncWarning(
+        song: SongItem?,
+        actionLabel: String,
+        warnForLocalSync: Boolean = true,
+        action: () -> Unit
+    ) {
+        if (warnForLocalSync && song?.isLocalSong() == true) {
+            pendingSyncConfirmLabel = actionLabel
+            pendingSyncConfirmAction = action
+        } else {
+            action()
+        }
+    }
+
     // 自适应布局判断
     val configuration = LocalConfiguration.current
+    val windowInfo = LocalWindowInfo.current
+    val density = LocalDensity.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-    val isTablet = configuration.smallestScreenWidthDp >= 600
-    val useTabletLandscapeLayout = isTablet && isLandscape
+    val windowWidthDp = with(density) { windowInfo.containerSize.width.toDp() }
+    val isWideLayout = windowWidthDp >= 480.dp
+    val useWideLandscapeLayout = isWideLayout && isLandscape
 
     // 歌词偏移（平台 + 用户自定义）
     val platformOffset = if (currentSong?.matchedLyricSource == MusicPlatform.QQ_MUSIC) 500L else 1000L
@@ -334,9 +392,15 @@ fun NowPlayingScreen(
                     targetState = showLyricsScreen,
                     transitionSpec = {
                         fadeIn(
-                            animationSpec = tween(durationMillis = 300, easing = LinearEasing)
+                            animationSpec = tween(
+                                durationMillis = LyricsPageTransitionDurationMs,
+                                easing = LinearEasing
+                            )
                         ) togetherWith fadeOut(
-                            animationSpec = tween(durationMillis = 300, easing = LinearEasing)
+                            animationSpec = tween(
+                                durationMillis = LyricsPageTransitionDurationMs,
+                                easing = LinearEasing
+                            )
                         )
                     },
                     label = "lyrics_transition"
@@ -370,7 +434,7 @@ fun NowPlayingScreen(
                     }
 
                 // 手机或竖屏下，左滑进入歌词页
-                if (!useTabletLandscapeLayout && lyrics.isNotEmpty()) {
+                if (!useWideLandscapeLayout && lyrics.isNotEmpty()) {
                     contentModifier = contentModifier.pointerInput(lyrics) {
                         detectHorizontalDragGestures { _, dragAmount ->
                             if (dragAmount < -20) showLyricsScreen = true
@@ -416,8 +480,18 @@ fun NowPlayingScreen(
                                 onClick = {
                                     if (currentSong == null) return@HapticIconButton
                                     val willFav = !isFavorite
-                                    favOverride = willFav
-                                    if (willFav) PlayerManager.addCurrentToFavorites() else PlayerManager.removeCurrentFromFavorites()
+                                    launchWithLocalSyncWarning(
+                                        song = currentSong,
+                                        actionLabel = context.getString(R.string.favorite_add),
+                                        warnForLocalSync = willFav
+                                    ) {
+                                        favOverride = willFav
+                                        if (willFav) {
+                                            PlayerManager.addCurrentToFavorites()
+                                        } else {
+                                            PlayerManager.removeCurrentFromFavorites()
+                                        }
+                                    }
                                 },
                                 modifier = Modifier.size(48.dp)
                                     .sharedBounds(
@@ -455,6 +529,7 @@ fun NowPlayingScreen(
                                     originalSong = currentSong!!,
                                     queue = displayedQueue,
                                     onDismiss = { showMoreOptions = false },
+                                    onShowSongDetails = { detailSong = it },
                                     onEnterAlbum = onEnterAlbum,
                                     onNavigateUp = onNavigateUp,
                                     snackbarHostState = snackbarHostState,
@@ -468,78 +543,73 @@ fun NowPlayingScreen(
                     Spacer(Modifier.height(8.dp))
 
                     // 封面
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.CenterHorizontally)
-                            .size(240.dp)
-                            .sharedElement(
-                                rememberSharedContentState(key = "cover_image"),
-                                animatedVisibilityScope = this@AnimatedContent
-                            )
-                            .clip(RoundedCornerShape(24.dp))
-                            .background(
-                                color = if ((currentSong?.customCoverUrl ?: currentSong?.coverUrl) != null) Color.Transparent else MaterialTheme.colorScheme.primaryContainer
-                            )
+                    BoxWithConstraints(
+                        modifier = Modifier.align(Alignment.CenterHorizontally)
                     ) {
-                        val displayCoverUrl = currentSong?.customCoverUrl ?: currentSong?.coverUrl
-                        displayCoverUrl?.let { cover ->
-                            val context = LocalContext.current
-                            AsyncImage(
-                                model = offlineCachedImageRequest(context, cover),
-                                contentDescription = currentSong?.customName ?: currentSong?.name ?: "",
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize()
-                            )
-                        }
-
-                        // 右下角来源徽标
-                        if (isFromNetease) {
-                            Row(
+                        val coverSize = minOf(maxWidth * 0.6f, maxHeight * 0.65f)
+                        Box(
+                            modifier = Modifier
+                                .size(coverSize)
+                        ) {
+                            Box(
                                 modifier = Modifier
-                                    .align(Alignment.BottomEnd)
-                                    .padding(10.dp)
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.92f))
-                                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                                    .fillMaxSize()
+                                    .sharedElement(
+                                        rememberSharedContentState(key = "cover_image"),
+                                        animatedVisibilityScope = this@AnimatedContent
+                                    )
+                                    .clip(RoundedCornerShape(24.dp))
+                                    .background(
+                                        color = if ((currentSong?.customCoverUrl ?: currentSong?.coverUrl) != null) {
+                                            Color.Transparent
+                                        } else {
+                                            MaterialTheme.colorScheme.primaryContainer
+                                        }
+                                    )
                             ) {
-                                Icon(
-                                    painter = painterResource(id = R.drawable.ic_netease_cloud_music),
-                                    contentDescription = stringResource(R.string.cd_netease),
-                                    tint = LocalContentColor.current,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = stringResource(R.string.nowplaying_netease_cloud),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
+                                val displayCoverUrl = currentSong?.customCoverUrl ?: currentSong?.coverUrl
+                                displayCoverUrl?.let { cover ->
+                                    val context = LocalContext.current
+                                    AsyncImage(
+                                        model = offlineCachedImageRequest(context, cover),
+                                        contentDescription = currentSong?.customName ?: currentSong?.name ?: "",
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                }
                             }
-                        }
 
-                        if (isFromBili) {
-                            Row(
-                                modifier = Modifier
-                                    .align(Alignment.BottomEnd)
-                                    .padding(10.dp)
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.92f))
-                                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    painter = painterResource(id = R.drawable.ic_bilibili),
-                                    contentDescription = stringResource(R.string.cd_bilibili),
-                                    tint = LocalContentColor.current,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = stringResource(R.string.nowplaying_bilibili),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
+                            val coverPageSourceBadgeScale by animateFloatAsState(
+                                targetValue = if (showCoverPageSourceBadge && playbackSourceType != null) {
+                                    1f
+                                } else {
+                                    0f
+                                },
+                                animationSpec = if (animateCoverPageSourceBadge) {
+                                    tween(
+                                        durationMillis = 280,
+                                        easing = CubicBezierEasing(0.2f, 0f, 0.7f, 0.2f)
+                                    )
+                                } else {
+                                    snap()
+                                },
+                                label = "cover_source_badge_scale"
+                            )
+
+                            if (showCoverPageSourceBadge && playbackSourceType != null) {
+                                playbackSourceType?.let { sourceType ->
+                                    PlaybackSourceBadge(
+                                        source = sourceType,
+                                        modifier = Modifier
+                                            .align(Alignment.BottomEnd)
+                                            .padding(10.dp)
+                                            .graphicsLayer {
+                                                scaleX = coverPageSourceBadgeScale
+                                                scaleY = coverPageSourceBadgeScale
+                                                alpha = coverPageSourceBadgeScale
+                                            }
+                                    )
+                                }
                             }
                         }
                     }
@@ -730,7 +800,7 @@ fun NowPlayingScreen(
                     }
 
                     // 手机/竖屏，内嵌迷你歌词
-                    if (!useTabletLandscapeLayout && lyrics.isNotEmpty()) {
+                    if (!useWideLandscapeLayout && lyrics.isNotEmpty()) {
                         Spacer(Modifier.weight(1f))
 
                         AppleMusicLyric(
@@ -865,14 +935,14 @@ fun NowPlayingScreen(
                 }
 
                 // 平板横屏
-                if (useTabletLandscapeLayout) {
+                if (useWideLandscapeLayout) {
                     Row(
                         modifier = contentModifier,
                         horizontalArrangement = Arrangement.spacedBy(24.dp)
                     ) {
                         Column(
                             modifier = Modifier
-                                .weight(1f) // 左半屏
+                                .weight(0.6f) // 左半屏主区域
                                 .fillMaxHeight(),
                             horizontalAlignment = Alignment.CenterHorizontally,
                             content = mainColumnContent
@@ -882,7 +952,7 @@ fun NowPlayingScreen(
                                 lyrics = lyrics,
                                 currentTimeMs = currentPosition,
                                 modifier = Modifier
-                                    .weight(1f) // 右半屏
+                                    .weight(0.4f) // 右半屏
                                     .fillMaxHeight(),
                                 textColor = MaterialTheme.colorScheme.onBackground,
                                 fontSize = (18f * lyricFontScale).coerceIn(14f, 26f).sp,
@@ -1017,18 +1087,26 @@ fun NowPlayingScreen(
             }
 
             if (showAddSheet) {
+                val selectablePlaylists = remember(playlists, context) {
+                    playlists.filterNot { LocalFilesPlaylist.isSystemPlaylist(it, context) }
+                }
                 ModalBottomSheet(
                     onDismissRequest = { showAddSheet = false },
                     sheetState = addSheetState
                 ) {
                     LazyColumn {
-                        itemsIndexed(playlists) { _, pl ->
+                        itemsIndexed(selectablePlaylists) { _, pl ->
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clickable {
-                                        PlayerManager.addCurrentToPlaylist(pl.id)
-                                        showAddSheet = false
+                                        launchWithLocalSyncWarning(
+                                            song = currentSong,
+                                            actionLabel = context.getString(R.string.playlist_add_to)
+                                        ) {
+                                            PlayerManager.addCurrentToPlaylist(pl.id)
+                                            showAddSheet = false
+                                        }
                                     }
                                     .padding(horizontal = 24.dp, vertical = 16.dp),
                                 verticalAlignment = Alignment.CenterVertically
@@ -1047,6 +1125,28 @@ fun NowPlayingScreen(
             if (showSleepTimerDialog) {
                 SleepTimerDialog(
                     onDismiss = { showSleepTimerDialog = false }
+                )
+            }
+
+            detailSong?.let { song ->
+                LocalSongDetailsDialog(
+                    song = song,
+                    onDismiss = { detailSong = null }
+                )
+            }
+
+            pendingSyncConfirmAction?.let { action ->
+                LocalSongSyncConfirmDialog(
+                    actionLabel = pendingSyncConfirmLabel,
+                    onConfirm = {
+                        pendingSyncConfirmAction = null
+                        pendingSyncConfirmLabel = ""
+                        action()
+                    },
+                    onDismiss = {
+                        pendingSyncConfirmAction = null
+                        pendingSyncConfirmLabel = ""
+                    }
                 )
             }
         }
@@ -1138,6 +1238,7 @@ fun MoreOptionsSheet(
     originalSong: SongItem,
     queue: List<SongItem>,
     onDismiss: () -> Unit,
+    onShowSongDetails: (SongItem) -> Unit = {},
     onEnterAlbum: (NeteaseAlbum) -> Unit,
     onNavigateUp: () -> Unit,
     snackbarHostState: SnackbarHostState,
@@ -1151,14 +1252,19 @@ fun MoreOptionsSheet(
     var showEditInfoSheet by remember { mutableStateOf(false) }
 
     val focusManager = LocalFocusManager.current
+    val searchFocusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
+    val isLocalSong = originalSong.isLocalSong()
 
-    // 当弹窗打开时，如果需要，预填充搜索词
     LaunchedEffect(showSearchView) {
         if (showSearchView) {
             viewModel.prepareForSearch(originalSong.name)
             viewModel.performSearch()
+            delay(120)
+            searchFocusRequester.requestFocus()
+            keyboardController?.show()
         }
     }
 
@@ -1218,7 +1324,16 @@ fun MoreOptionsSheet(
                             leadingContent = { Icon(Icons.Outlined.Edit, null) },
                             modifier = Modifier.clickable { showEditInfoSheet = true }
                         )
-                        if (AudioDownloadManager.getLocalFilePath(context, originalSong) == null) {
+                        if (isLocalSong) {
+                            ListItem(
+                                headlineContent = { Text(stringResource(R.string.local_song_open_details)) },
+                                leadingContent = { Icon(Icons.Outlined.Info, null) },
+                                modifier = Modifier.clickable {
+                                    onShowSongDetails(originalSong)
+                                    onDismiss()
+                                }
+                            )
+                        } else if (AudioDownloadManager.getLocalFilePath(context, originalSong) == null) {
                             // 监听下载进度
                             val downloadProgress by AudioDownloadManager.progressFlow.collectAsState()
                             val isDownloading = downloadProgress != null
@@ -1234,7 +1349,13 @@ fun MoreOptionsSheet(
                                 supportingContent = downloadProgress?.let { progress ->
                                     {
                                         Column {
-                                            Text("${progress.percentage}% - ${progress.fileName}")
+                                            Text(
+                                                stringResource(
+                                                    R.string.download_progress_file_label,
+                                                    progress.percentage,
+                                                    progress.fileName
+                                                )
+                                            )
                                             LinearProgressIndicator(
                                                 progress = { progress.bytesRead.toFloat() / progress.totalBytes.toFloat() },
                                                 modifier = Modifier.fillMaxWidth()
@@ -1262,7 +1383,12 @@ fun MoreOptionsSheet(
                             headlineContent = { Text(stringResource(R.string.lyrics_font_size)) },
                             leadingContent = { Icon(Icons.Outlined.FormatSize, null) },
                             supportingContent = {
-                                Text("${(lyricFontScale * 100).roundToInt()}%")
+                                Text(
+                                    stringResource(
+                                        R.string.common_percent_int,
+                                        (lyricFontScale * 100).roundToInt()
+                                    )
+                                )
                             },
                             modifier = Modifier.clickable { showFontSizeSheet = true }
                         )
@@ -1284,41 +1410,56 @@ fun MoreOptionsSheet(
                             leadingContent = { Icon(Icons.Outlined.Share, null) },
                             modifier = Modifier.clickable {
                                 val song = originalSong
-                                val isFromBili = song.album.startsWith(PlayerManager.BILI_SOURCE_TAG)
-
-                                val url = if (isFromBili) {
-                                    // 筛选出队列中属于同一个B站视频的所有分P
-                                    val videoParts = queue.filter {
-                                        it.id == song.id && it.album.startsWith(PlayerManager.BILI_SOURCE_TAG)
-                                    }
-                                    if (videoParts.size > 1) {
-                                        val pageIndex = videoParts.indexOfFirst {
-                                            it.album == song.album
+                                if (song.isLocalSong()) {
+                                    val shared = runCatching {
+                                        LocalMediaSupport.shareSongFile(context, song)
+                                    }.getOrElse { false }
+                                    if (!shared) {
+                                        coroutineScope.launch {
+                                            snackbarHostState.showSnackbar(
+                                                context.getString(R.string.local_song_share_failed)
+                                            )
                                         }
-                                        val pageNumber = pageIndex + 1
-                                        if (pageIndex != -1) {
-                                            "https://www.bilibili.com/video/av${song.id}/?p=${pageNumber}"
+                                    } else {
+                                        onDismiss()
+                                    }
+                                } else {
+                                    val isFromBili = song.album.startsWith(PlayerManager.BILI_SOURCE_TAG)
+
+                                    val url = if (isFromBili) {
+                                        // 筛选出队列中属于同一个B站视频的所有分P
+                                        val videoParts = queue.filter {
+                                            it.id == song.id && it.album.startsWith(PlayerManager.BILI_SOURCE_TAG)
+                                        }
+                                        if (videoParts.size > 1) {
+                                            val pageIndex = videoParts.indexOfFirst {
+                                                it.album == song.album
+                                            }
+                                            val pageNumber = pageIndex + 1
+                                            if (pageIndex != -1) {
+                                                "https://www.bilibili.com/video/av${song.id}/?p=${pageNumber}"
+                                            } else {
+                                                "https://www.bilibili.com/video/av${song.id}"
+                                            }
                                         } else {
                                             "https://www.bilibili.com/video/av${song.id}"
                                         }
                                     } else {
-                                        "https://www.bilibili.com/video/av${song.id}"
+                                        "https://music.163.com/#/song?id=${song.id}"
                                     }
-                                } else {
-                                    "https://music.163.com/#/song?id=${song.id}"
+
+                                    val shareText = context.getString(R.string.nowplaying_share_song, song.name, song.artist, url)
+
+                                    val sendIntent: Intent = Intent().apply {
+                                        action = Intent.ACTION_SEND
+                                        putExtra(Intent.EXTRA_TEXT, shareText)
+                                        type = "text/plain"
+                                    }
+
+                                    val shareIntent = Intent.createChooser(sendIntent, null)
+                                    context.startActivity(shareIntent)
+                                    onDismiss()
                                 }
-
-                                val shareText = context.getString(R.string.nowplaying_share_song, song.name, song.artist, url)
-
-                                val sendIntent: Intent = Intent().apply {
-                                    action = Intent.ACTION_SEND
-                                    putExtra(Intent.EXTRA_TEXT, shareText)
-                                    type = "text/plain"
-                                }
-
-                                val shareIntent = Intent.createChooser(sendIntent, null)
-                                context.startActivity(shareIntent)
-                                onDismiss()
                             }
                         )
                     }
@@ -1340,6 +1481,7 @@ fun MoreOptionsSheet(
                             label = { Text(stringResource(R.string.search_keywords)) },
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .focusRequester(searchFocusRequester)
                                 .padding(horizontal = 16.dp, vertical = 8.dp),
                             trailingIcon = {
                                 HapticIconButton(onClick = { viewModel.performSearch() }) {
@@ -1611,7 +1753,7 @@ fun EditSongInfoSheet(
 
     // 监听当前播放的歌曲，以便在"获取歌曲信息"后更新UI
     val currentSong by PlayerManager.currentSongFlow.collectAsState()
-    val actualSong = if (currentSong?.id == originalSong.id && currentSong?.album == originalSong.album) {
+    val actualSong = if (currentSong?.sameIdentityAs(originalSong) == true) {
         currentSong!!
     } else {
         originalSong
@@ -1674,6 +1816,42 @@ fun EditSongInfoSheet(
         viewModel.prepareForSearch(originalSong.name)
     }
 
+    fun applyOriginalInfo(
+        restoreCover: Boolean,
+        restoreTitle: Boolean,
+        restoreArtist: Boolean,
+        restoreLyrics: Boolean
+    ) {
+        viewModel.fetchOriginalInfo(context, actualSong) { success, info, message ->
+            if (success && info != null) {
+                if (restoreTitle) {
+                    songName = info.name
+                }
+                if (restoreArtist) {
+                    artistName = info.artist
+                }
+                if (restoreCover) {
+                    coverUrl = info.coverUrl ?: ""
+                }
+                if (restoreLyrics) {
+                    if (info.shouldClearLyrics) {
+                        shouldClearLyrics = true
+                        shouldRestoreLyrics = false
+                        originalLyric = null
+                        originalTranslatedLyric = null
+                    } else {
+                        shouldClearLyrics = false
+                        shouldRestoreLyrics = info.lyric != null || info.translatedLyric != null
+                        originalLyric = info.lyric
+                        originalTranslatedLyric = info.translatedLyric
+                    }
+                }
+                userHasEdited = true
+            }
+            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+        }
+    }
+
     // 使用 AnimatedVisibility 控制内容显示，避免重叠
     AnimatedVisibility(
         visible = !showLyricsEditor,
@@ -1718,7 +1896,24 @@ fun EditSongInfoSheet(
                 label = { Text(stringResource(R.string.music_cover_url)) },
                 placeholder = { Text(stringResource(R.string.music_cover_url_hint)) },
                 modifier = Modifier.fillMaxWidth(),
-                singleLine = true
+                singleLine = true,
+                trailingIcon = {
+                    HapticIconButton(
+                        onClick = {
+                            applyOriginalInfo(
+                                restoreCover = true,
+                                restoreTitle = false,
+                                restoreArtist = false,
+                                restoreLyrics = false
+                            )
+                        }
+                    ) {
+                        Icon(
+                            Icons.Outlined.Refresh,
+                            contentDescription = stringResource(R.string.music_restore_cover)
+                        )
+                    }
+                }
             )
 
             // 封面预览
@@ -1744,7 +1939,24 @@ fun EditSongInfoSheet(
                 onValueChange = { songName = it },
                 label = { Text(stringResource(R.string.music_edit_title)) },
                 modifier = Modifier.fillMaxWidth(),
-                singleLine = true
+                singleLine = true,
+                trailingIcon = {
+                    HapticIconButton(
+                        onClick = {
+                            applyOriginalInfo(
+                                restoreCover = false,
+                                restoreTitle = true,
+                                restoreArtist = false,
+                                restoreLyrics = false
+                            )
+                        }
+                    ) {
+                        Icon(
+                            Icons.Outlined.Refresh,
+                            contentDescription = stringResource(R.string.music_restore_title)
+                        )
+                    }
+                }
             )
 
             // 艺术家输入框
@@ -1753,7 +1965,24 @@ fun EditSongInfoSheet(
                 onValueChange = { artistName = it },
                 label = { Text(stringResource(R.string.music_edit_artist)) },
                 modifier = Modifier.fillMaxWidth(),
-                singleLine = true
+                singleLine = true,
+                trailingIcon = {
+                    HapticIconButton(
+                        onClick = {
+                            applyOriginalInfo(
+                                restoreCover = false,
+                                restoreTitle = false,
+                                restoreArtist = true,
+                                restoreLyrics = false
+                            )
+                        }
+                    ) {
+                        Icon(
+                            Icons.Outlined.Refresh,
+                            contentDescription = stringResource(R.string.music_restore_artist)
+                        )
+                    }
+                }
             )
 
             // 编辑歌词按钮
@@ -1820,6 +2049,8 @@ fun EditSongInfoSheet(
             }
         }
 
+        val actionButtonFontSize = if (LocalConfiguration.current.screenWidthDp < 420) 11.sp else 13.sp
+
         // 搜索自动填充按钮
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -1835,46 +2066,35 @@ fun EditSongInfoSheet(
             ) {
                 Icon(Icons.Filled.Search, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(4.dp))
-                Text(stringResource(R.string.music_auto_fill))
+                Text(
+                    text = stringResource(R.string.music_auto_fill),
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis,
+                    fontSize = actionButtonFontSize
+                )
             }
 
             HapticTextButton(
                 onClick = {
-                    viewModel.fetchOriginalInfo(context, actualSong) { success, info, message ->
-                        if (success && info != null) {
-                            // 填充到编辑框，但不保存
-                            songName = info.name
-                            artistName = info.artist
-                            coverUrl = info.coverUrl ?: ""
-
-                            // 根据音源类型设置不同的标志
-                            if (info.shouldClearLyrics) {
-                                // B站音源：标记需要清除歌词
-                                shouldClearLyrics = true
-                                shouldRestoreLyrics = false
-                                NPLogger.d("NowPlayingScreen", "B站音源恢复: 将清除歌词")
-                            } else {
-                                // 网易云音源：保存原始歌词，标记需要恢复
-                                shouldClearLyrics = false
-                                shouldRestoreLyrics = info.lyric != null || info.translatedLyric != null
-                                originalLyric = info.lyric
-                                originalTranslatedLyric = info.translatedLyric
-                                NPLogger.d("NowPlayingScreen", "网易云音源恢复: 将恢复歌词, hasLyric=${info.lyric != null}, hasTranslation=${info.translatedLyric != null}")
-                            }
-
-                            // 标记用户已编辑，防止自动更新覆盖
-                            userHasEdited = true
-                            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
-                        } else {
-                            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
-                        }
-                    }
+                    applyOriginalInfo(
+                        restoreCover = true,
+                        restoreTitle = true,
+                        restoreArtist = true,
+                        restoreLyrics = true
+                    )
                 },
                 modifier = Modifier.weight(1f)
             ) {
                 Icon(Icons.Outlined.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(4.dp))
-                Text(stringResource(R.string.music_restore_original))
+                Text(
+                    text = stringResource(R.string.music_restore_original),
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis,
+                    fontSize = actionButtonFontSize
+                )
             }
 
             HapticTextButton(
@@ -1929,13 +2149,25 @@ fun EditSongInfoSheet(
                             onDismiss()
                         } catch (e: Exception) {
                             NPLogger.e("NowPlayingScreen", "保存歌曲信息失败", e)
-                            Toast.makeText(context, "保存失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(
+                                context,
+                                context.getString(R.string.toast_save_failed, e.message.orEmpty()),
+                                Toast.LENGTH_SHORT
+                            ).show()
                         }
                     }
                 },
                 modifier = Modifier.weight(1f)
             ) {
-                Text(stringResource(R.string.music_save_changes))
+                Icon(Icons.Outlined.Save, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(4.dp))
+                Text(
+                    text = stringResource(R.string.music_save_changes),
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis,
+                    fontSize = actionButtonFontSize
+                )
             }
         }
     }
